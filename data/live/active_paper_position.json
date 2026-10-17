@@ -1,0 +1,21 @@
+{
+  "is_active": true,
+  "position_id": "live_paper_16155",
+  "pool_address": "BwWwdKCndqPn65Fb5rARio2GsmMH4gYbAWfV1Dy7vG23",
+  "token_mint": "FkLVnbHSZQtFHtqoJEArQJaFm9tBP38REAoXFYUapump",
+  "regime": "REGIME_B",
+  "position_notional_usd": 15.0,
+  "entry_time": "2026-10-17T05:49:15.850663+00:00",
+  "entry_price_sol": 0.0003655483870967742,
+  "current_price_sol": 0.0003655483870967742,
+  "peak_price_sol": 0.0003655483870967742,
+  "current_stop_price_sol": 0.0003289935483870968,
+  "ratchet_trigger_price_sol": 0.00042191594838709675,
+  "ratchet_floor_price_sol": 0.0003933300645161291,
+  "ratchet_activated": false,
+  "state": "OPEN",
+  "elapsed_minutes": 2.0,
+  "unrealized_return_pct": 0.0,
+  "unrealized_pnl_usd": 0.0,
+  "updated_at": "2026-10-17T05:51:18.428875+00:00"
+}

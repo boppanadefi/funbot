@@ -1,0 +1,10 @@
+{
+  "date": "2026-10-17",
+  "realized_daily_loss_usd": 0.0,
+  "is_halted": false,
+  "halt_reason": null,
+  "operator_signoff_required": false,
+  "trades_count": 1,
+  "net_daily_pnl_usd": 2.4825,
+  "realized_daily_gain_usd": 2.4825
+}

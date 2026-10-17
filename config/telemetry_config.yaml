@@ -1,0 +1,27 @@
+# Telemetry Engine Configuration (Phase 1 Observational)
+# Zero private keys — public RPC observation only
+
+network:
+  cluster: "mainnet-beta"
+  http_rpc_url: "https://api.mainnet-beta.solana.com"
+  ws_rpc_url: "wss://api.mainnet-beta.solana.com"
+  pumpswap_program_id: "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"  # Pump.fun canonical program
+
+sampling:
+  rolling_windows_seconds: [10, 30, 60]
+  heartbeat_interval_seconds: 5.0
+  reconnect_delay_seconds: 2.0
+  reserve_snapshot_interval_seconds: 30.0
+
+falsification_gate:
+  required_observation_days: 14
+  min_candidates_per_day: 3.0
+  min_depth_pass_rate_pct: 20.0
+  max_acceptable_friction_pct: 7.0
+  simulated_test_notional_usd: 20.00
+  sol_usd_reference_price: 155.00
+
+storage:
+  sqlite_db_path: "data/telemetry/telemetry.db"
+  parquet_export_dir: "data/telemetry/parquet/"
+  gate_report_path: "data/telemetry/gate_report.json"

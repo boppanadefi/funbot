@@ -1,0 +1,36 @@
+# PumpSwap Canonical Pool Fee Schedule
+# Source: Official PumpSwap fee schedule tiered by pool market capitalization
+# Canonical pools quoted in SOL only
+
+quote_asset: "SOL"
+
+# Market-Cap Tiered Venue Fees
+tiers:
+  - tier_id: 1
+    name: "Regime A (Low Cap)"
+    max_market_cap_sol: 420.0
+    venue_fee_pct: 1.250
+    description: "Standard entry tier for newly graduated tokens below 420 SOL market cap."
+
+  - tier_id: 2
+    name: "Regime B (Mid Cap)"
+    min_market_cap_sol: 420.0
+    max_market_cap_sol: 1000.0
+    venue_fee_pct: 1.200
+    description: "Mid-cap regime where fee begins declining linearly toward 0.30%."
+
+  - tier_id: 3
+    name: "Regime C (High Cap)"
+    min_market_cap_sol: 1000.0
+    max_market_cap_sol: .inf
+    venue_fee_pct: 0.300
+    description: "Highest tier where venue fee reaches minimum asymptotic floor of 0.30%."
+
+# Transaction Overheads (Per Leg)
+network_overheads:
+  base_signature_fee_sol: 0.000005
+  priority_fee_cap_sol: 0.000200
+  p50_jito_tip_sol: 0.001000
+  p75_jito_tip_sol: 0.002000
+  max_entry_tip_cap_pct: 1.50   # 1.5% of position notional
+  emergency_exit_budget_sol: 0.005000  # Dedicated reserve for fast exit

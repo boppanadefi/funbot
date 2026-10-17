@@ -1,0 +1,23 @@
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# Python Cache & Artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local Telemetry Data & Logs
+data/telemetry/*.db
+data/telemetry/*.db-journal
+data/telemetry/parquet/
+*.log
+
+# Streamlit
+.streamlit/
