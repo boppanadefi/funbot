@@ -24,15 +24,22 @@ def render_cost_panel(pools: List[Dict]) -> None:
 
     gate = PreFlightDoubleGate(sol_price_usd=155.0)
 
-    # Position sizing selector
+    # Position sizing selector & dynamic sizing toggle
     sim_col1, sim_col2 = st.columns([1, 2])
     with sim_col1:
         trade_size = st.select_slider(
-            "Test Position Size ($ USD)",
+            "Max Test Position Size ($ USD)",
             options=[10.0, 15.0, 20.0, 25.0],
-            value=15.0,
+            value=25.0,
             format_func=lambda x: f"${x:.0f} USD",
         )
+    with sim_col2:
+        use_dyn = st.toggle(
+            "Dynamic Liquidity Sizing (Fix 5: Auto-Resize & Floor $3.00)",
+            value=True,
+            help="Sizes position = min(Max Safe Swap at 1.5% impact, $25 wallet limit). Hard rejects if < $3.00.",
+        )
+        st.caption("Auto-resizes thinner pools (e.g. $6) instead of starving bot with static $20 check.")
 
     # Evaluate active secondary candidates
     active_pools = [p for p in pools if p.get("state") == "ACTIVE_WINDOW"]
@@ -50,6 +57,7 @@ def render_cost_panel(pools: List[Dict]) -> None:
             current_sol_reserve=reserve,
             position_notional_usd=trade_size,
             is_canonical=is_canon,
+            use_dynamic_sizing=use_dyn,
         )
         eval_results.append((p, res))
 
@@ -98,9 +106,9 @@ def render_cost_panel(pools: List[Dict]) -> None:
         st.markdown(
             """
             <div class="metric-card">
-                <div class="metric-label">Entry Tip Cap</div>
-                <div class="metric-value">&le; 1.5%</div>
-                <div class="metric-sub">Notional Cap (0.005 SOL Exit Reserve)</div>
+                <div class="metric-label">Dynamic Sizing Mode</div>
+                <div class="metric-value" style="color: var(--blue);">1.5% Impact</div>
+                <div class="metric-sub">Floor: $3.00 | Cap: $25.00</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -112,6 +120,7 @@ def render_cost_panel(pools: List[Dict]) -> None:
     for p, r in eval_results:
         token_short = f"{r.token_mint[:6]}...{r.token_mint[-4:]}"
         mc_val = p.get("market_cap_sol", 400.0)
+        res_val = float(p.get("current_sol_reserve") or p.get("sol_reserve") or 0.0)
 
         regime_badge = (
             '<span class="badge badge-amber">REGIME A (T1)</span>'
@@ -128,15 +137,19 @@ def render_cost_panel(pools: List[Dict]) -> None:
             reason = r.rejection_reasons[0] if r.rejection_reasons else "Gate Cap Breached"
             verdict = f'<span class="badge badge-red">BLOCKED</span> <span style="font-size: 0.72rem; color: var(--red);">{reason}</span>'
 
+        size_display = f"${r.dynamic_position_size_usd:.2f}" if r.dynamic_position_size_usd > 0 else f"${trade_size:.2f}"
+
         row = (
             f"<tr>"
             f"<td class='mono'><strong>{token_short}</strong></td>"
             f"<td class='mono'>{mc_val:.1f} SOL</td>"
+            f"<td class='mono'>{res_val:.1f} SOL</td>"
+            f"<td class='mono' style='color: var(--blue);'><strong>{size_display}</strong></td>"
             f"<td>{regime_badge}</td>"
             f"<td class='mono'>{r.roundtrip_venue_fee_pct:.3f}%</td>"
             f"<td class='mono' style='color: {exp_color};'><strong>{r.expected_cost_pct:.2f}%</strong></td>"
             f"<td class='mono' style='color: {stress_color};'>{r.stress_cost_pct:.2f}%</td>"
-            f"<td class='mono' style='color: var(--blue);'><strong>+{r.ratchet_trigger_gross_pct:.1f}%</strong></td>"
+            f"<td class='mono' style='color: var(--blue);'><strong>+{r.tp1_target_gross_pct:.1f}%</strong></td>"
             f"<td>{verdict}</td>"
             f"</tr>"
         )
@@ -145,18 +158,20 @@ def render_cost_panel(pools: List[Dict]) -> None:
     table_body = "".join(table_rows)
     table_html = (
         f"<div class='metric-card' style='overflow-x: auto;'>"
-        f"<div style='font-weight: 700; font-size: 0.95rem; margin-bottom: 0.6rem;'>Pre-Flight Double Gate & Hurdle Accounting (${trade_size:.0f} Position)</div>"
+        f"<div style='font-weight: 700; font-size: 0.95rem; margin-bottom: 0.6rem;'>Pre-Flight Double Gate & Dynamic Sizing (Max Cap ${trade_size:.0f})</div>"
         f"<table class='data-table'>"
         f"<thead>"
         f"<tr>"
         f"<th>Token Mint</th>"
         f"<th>Market Cap</th>"
+        f"<th>SOL Reserve</th>"
+        f"<th>Position Size</th>"
         f"<th>Fee Regime</th>"
-        f"<th>Roundtrip Venue Fee</th>"
+        f"<th>Venue Fee</th>"
         f"<th>Expected Friction</th>"
         f"<th>Stressed Cost</th>"
-        f"<th>Ratchet Trigger</th>"
-        f"<th>Double Gate Status</th>"
+        f"<th>TP1 Friction Buster</th>"
+        f"<th>Status</th>"
         f"</tr>"
         f"</thead>"
         f"<tbody>{table_body}</tbody>"

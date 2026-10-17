@@ -29,7 +29,7 @@ class LiveMarketFeed:
         self,
         sol_price_usd: float = 155.0,
         timeout_seconds: int = 6,
-        min_age_minutes: float = 8.0,
+        min_age_minutes: float = 3.0,
         max_age_minutes: float = 25.0,
     ):
         self.sol_price_usd = sol_price_usd

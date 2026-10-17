@@ -29,6 +29,8 @@ class DoubleGateResult:
     net_profit_buffer_pct: float
     is_passed: bool
     rejection_reasons: List[str] = field(default_factory=list)
+    dynamic_position_size_usd: float = 15.0
+    tp1_target_gross_pct: float = 9.0  # Invariant 4: +8% to +10% TP1 Friction Buster target replaces Ratchet Trigger
 
 
 class PreFlightDoubleGate:
@@ -61,9 +63,17 @@ class PreFlightDoubleGate:
         position_notional_usd: float = 15.0,
         is_canonical: bool = True,
         cluster_score: Optional[ClusterRiskScore] = None,
+        use_dynamic_sizing: bool = True,
+        max_acceptable_impact_pct: float = 1.50,
+        max_wallet_limit_usd: float = 25.00,
+        min_viable_swap_usd: float = 3.00,
     ) -> DoubleGateResult:
         """
         Executes the pre-flight dual-hurdle double gate check.
+        Fix 5: Dynamic Liquidity-Based Sizing:
+        - Calculates exact max safe swap for target impact (1.5%).
+        - Sizes position to min(Calculated Max Swap, $25 Active Wallet Limit).
+        - Hard-rejects pool if Calculated Max Swap < $3.00 (Solana fixed tx overhead floor).
         """
         now = datetime.now(timezone.utc)
         rejection_reasons: List[str] = []
@@ -76,21 +86,40 @@ class PreFlightDoubleGate:
         # Roundtrip venue fees (2 swaps: entry + exit)
         roundtrip_venue_fee = tier_info.total_fee_pct * 2.0
 
+        # Fix 5: Dynamic Liquidity-Based Sizing
+        dyn_size_usd, is_viable, sizing_msg = self.slippage_model.calculate_dynamic_position_size_usd(
+            current_sol_reserve=current_sol_reserve,
+            max_acceptable_impact_pct=max_acceptable_impact_pct,
+            max_wallet_limit_usd=max_wallet_limit_usd,
+            min_viable_swap_usd=min_viable_swap_usd,
+        )
+
+        if use_dynamic_sizing:
+            # Rule: Position Size = min(Calculated Max Swap, $25 Active Wallet Limit)
+            # If Calculated Max Swap < $3.00, hard reject the pool
+            if not is_viable:
+                rejection_reasons.append(f"Depth inadequate: {sizing_msg}")
+            eval_notional_usd = min(position_notional_usd, dyn_size_usd) if is_viable else position_notional_usd
+        else:
+            eval_notional_usd = position_notional_usd
+
         # 2. Slippage & Price Impact
-        impact_info = self.slippage_model.estimate_impact(position_notional_usd, current_sol_reserve)
-        if not impact_info.passes_depth_screen:
+        impact_info = self.slippage_model.estimate_impact(
+            eval_notional_usd, current_sol_reserve, max_acceptable_impact_pct=max_acceptable_impact_pct
+        )
+        if not use_dynamic_sizing and not impact_info.passes_depth_screen:
             rejection_reasons.append(
                 f"Depth inadequate: {impact_info.entry_impact_pct:.2f}% entry impact (Cap < 2.0%)"
             )
 
         # 3. Transaction Overheads (2 legs: entry + exit)
-        exp_overhead, stress_overhead = self.tip_model.calculate_roundtrip_overhead(position_notional_usd)
+        exp_overhead, stress_overhead = self.tip_model.calculate_roundtrip_overhead(eval_notional_usd)
 
         # 4. Total Expected Cost
         expected_cost = roundtrip_venue_fee + impact_info.expected_roundtrip_impact_pct + exp_overhead
 
         # 5. Total Stressed Cost
-        stress_penalty = self.failure_model.get_amortized_stress_penalty_pct(position_notional_usd)
+        stress_penalty = self.failure_model.get_amortized_stress_penalty_pct(eval_notional_usd)
         stress_cost = roundtrip_venue_fee + impact_info.stressed_roundtrip_impact_pct + stress_overhead + stress_penalty
 
         # Expected Cost Cap per Regime
@@ -140,4 +169,6 @@ class PreFlightDoubleGate:
             net_profit_buffer_pct=net_buffer,
             is_passed=is_passed,
             rejection_reasons=rejection_reasons,
+            dynamic_position_size_usd=round(eval_notional_usd if is_viable else 0.0, 2),
+            tp1_target_gross_pct=9.0,
         )

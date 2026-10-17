@@ -20,7 +20,7 @@ data/telemetry/parquet/
 *.log
 
 # Live Runtime State (frequently mutated by daemons)
-data/live/active_paper_position.json
+data/live/*.json
 data/live/*.tmp
 
 # Streamlit

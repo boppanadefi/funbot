@@ -47,21 +47,21 @@ def test_state_tracker_enforces_cooling_and_active_windows():
     from src.telemetry.pool_discovery import PoolMigrationEvent
     now = datetime.now(timezone.utc)
 
-    # Pool 1: Age 4 minutes -> should be STABILIZING (<8m)
+    # Pool 1: Age 2 minutes -> should be STABILIZING (<3m protocol cliff)
     event_young = PoolMigrationEvent(
         pool_address="pool_young",
         token_mint="mint_young",
         quote_mint=NATIVE_SOL_MINT,
         is_canonical=True,
         graduation_slot=2000,
-        graduation_ts=(now - timedelta(minutes=4)).isoformat(),
+        graduation_ts=(now - timedelta(minutes=2)).isoformat(),
         initial_sol_reserve=85.0,
         initial_token_reserve=206_900_000.0,
         market_cap_sol=410.0,
     )
     pool_young = tracker.on_pool_migration(event_young)
     state = tracker.update_pool_tick("pool_young")
-    assert state == PoolState.STABILIZING, "Pool < 8 minutes must be in STABILIZING cooling period"
+    assert state == PoolState.STABILIZING, "Pool < 3 minutes must be in STABILIZING cooling period"
 
     # Pool 2: Age 12 minutes -> should be ACTIVE_WINDOW (8-25m)
     event_active = PoolMigrationEvent(

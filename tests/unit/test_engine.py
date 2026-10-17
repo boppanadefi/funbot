@@ -19,56 +19,104 @@ def temp_ledger(tmp_path):
     return PaperLedger(db_path=str(db_file))
 
 
-def test_path_a_ratchet_and_trailing_stop(temp_ledger):
+def test_friction_busting_scale_out_execution(temp_ledger):
     sim = PathASimulator(ledger=temp_ledger, sol_price_usd=155.0)
     start_time = datetime.now(timezone.utc)
 
-    # 1. Open Position: Entry at 0.00100 SOL, Ratchet Trigger at +18.0% (0.00118 SOL)
+    # 1. Open Position: Entry at 0.00100 SOL, $20 notional, TP1 target at +9.0% (0.00109 SOL)
     pos = sim.open_position(
-        position_id="pos_win_1",
-        pool_address="PoolPathA",
-        token_mint="TokenPathA",
+        position_id="pos_scaleout_win",
+        pool_address="PoolScaleOut",
+        token_mint="TokenScaleOut",
         regime="REGIME_A",
         market_cap_sol=390.0,
         entry_price_sol=0.00100,
-        ratchet_trigger_gross_pct=18.0,
-        position_notional_usd=15.0,
-        trailing_pct=0.12,
+        tp1_target_gross_pct=0.09,
+        position_notional_usd=20.0,
+        trailing_pct=0.15,
         entry_time=start_time,
+        trailing_mode="PERCENTAGE",
     )
     assert pos.state == PositionState.OPEN
-    assert pos.ratchet_activated is False
-    assert pos.current_stop_price_sol == pytest.approx(0.00090)  # -10% initial stop
+    assert pos.tp1_activated is False
+    assert pos.current_stop_price_sol == pytest.approx(0.00090)  # -10% initial protective stop
+    assert pos.tp1_price_sol == pytest.approx(0.00109)          # +9% TP1 trigger
 
-    # 2. Tick 1: Price rises to 0.00115 (below hurdle). Stop unchanged.
-    pos = sim.update_price_tick(pos, 0.00115, start_time + timedelta(minutes=2))
+    # 2. Tick 1: Price rises to 0.00105 (+5%, below +9% TP1). State remains OPEN.
+    pos = sim.update_price_tick(pos, 0.00105, start_time + timedelta(minutes=2))
     assert pos.state == PositionState.OPEN
-    assert pos.ratchet_activated is False
+    assert pos.tp1_activated is False
 
-    # 3. Tick 2: Price surges to 0.00125 (crosses +18% hurdle!). Ratchet activated!
-    pos = sim.update_price_tick(pos, 0.00125, start_time + timedelta(minutes=4))
-    assert pos.state == PositionState.RATCHETED
-    assert pos.ratchet_activated is True
-    # Stop is ratcheted up into profit! (at least floor price)
-    assert pos.current_stop_price_sol >= pos.ratchet_floor_price_sol
+    # 3. Tick 2: Price hits 0.00110 (+10% gross, crosses +9% TP1 target!).
+    # TP1 (The Friction Buster) executes: 80% of tokens liquidated!
+    pos = sim.update_price_tick(pos, 0.00110, start_time + timedelta(minutes=4))
+    assert pos.state == PositionState.RUNNER_ACTIVE
+    assert pos.tp1_activated is True
+    assert pos.tp1_leg is not None
+    assert pos.tp1_leg.token_amount == pytest.approx(pos.tokens_held * 0.80)
+    # Runner trailing stop is active: 15% below peak (0.00110 * 0.85 = 0.000935)
+    assert pos.current_stop_price_sol == pytest.approx(0.00110 * 0.85)
 
-    # 4. Tick 3: Price hits new peak at 0.00150. Trailing stop trails peak by 12% (0.00150 * 0.88 = 0.00132)
+    # 4. Tick 3: Free Runner surges to 0.00150 (+50%). Stop trails at 0.00150 * 0.85 = 0.001275.
     pos = sim.update_price_tick(pos, 0.00150, start_time + timedelta(minutes=6))
     assert pos.peak_price_sol == 0.00150
-    assert pos.current_stop_price_sol == pytest.approx(0.00150 * 0.88)
+    assert pos.current_stop_price_sol == pytest.approx(0.00150 * 0.85)
 
-    # 5. Tick 4: Price pulls back to 0.00130 (hits trailing stop 0.00132).
-    # Single full exit triggered! Exactly 2 swaps total.
-    closed_pos = sim.update_price_tick(pos, 0.00130, start_time + timedelta(minutes=8))
+    # 5. Tick 4: Price pulls back to 0.00125 (hits runner trailing stop 0.001275).
+    # Runner exit triggered! Liquidates remaining 20% tokens.
+    closed_pos = sim.update_price_tick(pos, 0.00125, start_time + timedelta(minutes=8))
     assert closed_pos.state == PositionState.CLOSED_TRAIL
     assert closed_pos.exit_reason == "TRAILING_STOP"
-    assert closed_pos.realized_net_pnl_usd > 0  # Profitable trade!
+    assert closed_pos.runner_leg is not None
+    assert closed_pos.runner_leg.token_amount == pytest.approx(closed_pos.tokens_held * 0.20)
+    assert closed_pos.realized_net_pnl_usd > 0  # Solid net profit!
 
-    # Check ledger persistence
+    # Check persistent ledger
     trades = temp_ledger.get_all_trades()
     assert len(trades) == 1
-    assert trades[0]["position_id"] == "pos_win_1"
+    assert trades[0]["position_id"] == "pos_scaleout_win"
     assert trades[0]["ratchet_activated"] == 1
+
+
+def test_friction_busting_runner_dumps_to_zero(temp_ledger):
+    """
+    Verifies the crucial mathematical advantage:
+    On a $20 trade, TP1 locks in +$1.44 (covering friction).
+    If the remaining $4 runner dumps completely, net loss is only -$2.56
+    instead of the -$3.50 loss incurred under the old 100% stop model.
+    """
+    sim = PathASimulator(ledger=temp_ledger, sol_price_usd=155.0)
+    start_time = datetime.now(timezone.utc)
+
+    pos = sim.open_position(
+        position_id="pos_runner_dump",
+        pool_address="PoolDump",
+        token_mint="TokenDump",
+        regime="REGIME_A",
+        market_cap_sol=390.0,
+        entry_price_sol=0.00100,
+        tp1_target_gross_pct=0.09,
+        position_notional_usd=20.0,
+        entry_time=start_time,
+    )
+
+    # 1. Price hits +9% TP1 -> 80% sold to cover friction
+    pos = sim.update_price_tick(pos, 0.00109, start_time + timedelta(minutes=2))
+    assert pos.tp1_activated is True
+    assert pos.state == PositionState.RUNNER_ACTIVE
+
+    # 2. Token dumps to near zero (0.000001 SOL)
+    closed = sim.update_price_tick(pos, 0.000001, start_time + timedelta(minutes=4))
+    assert closed.state == PositionState.CLOSED_TRAIL
+
+    # Net loss on trade is limited to ~$2.56 gross (vastly superior to the -$20 loss if held to 0)
+    gross_sol_received = pos.tp1_leg.sol_amount + pos.runner_leg.sol_amount
+    gross_pnl_usd = (gross_sol_received - pos.sol_spent) * sim.sol_price_usd
+    assert pytest.approx(gross_pnl_usd, abs=0.15) == -2.56
+
+    # Realized net loss with all 3 legs of fees/tips is strictly bounded and superior to older full-loss stops
+    assert -3.60 <= closed.realized_net_pnl_usd <= -2.00
+
 
 
 def test_path_a_hard_stop_loss(temp_ledger):

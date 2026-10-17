@@ -22,12 +22,26 @@
 
 Every service, module, and agent in this repository must strictly adhere to these seven invariant rules:
 
-1. **Sub-Minute Sniping Abandoned:** No bonding curve sniping. Strict focus on secondary momentum on canonical PumpSwap pools **8 to 25 minutes** post-graduation.
-2. **Path A+ (100% Dynamic Trailing Single Exit):** Tranche / scaled exits (Path B) are strictly prohibited for positions < $50. Apply 100% of position notional to capture uncapped upside with a dynamic trailing stop. When the initial profit hurdle is crossed, ratchet the stop on 100% of the position to lock in +8% to +10% net profit, then trail peak executable price by 10%–15%. When momentum breaks, exit 100% in a single transaction, eliminating tranche dilution and restricting execution to strictly 2 swaps total.
-3. **Protocol Buyback Cliff Avoidance:** Enforce an **8-minute stabilization cooldown** post-graduation, completely bypassing the 0–5 and 5–8 minute BOOST buyback cliff.
-4. **Pre-Flight Double Gate:** Strict pre-flight friction caps (7.0% Regime A, 6.0% Regime B) and gross profit hurdles (+16% to +22% Regime A, +12% to +16% Regime B) guaranteeing a 10%–14% net profit buffer.
-5. **Cluster & Burner Risk Filtering (Phase 2):** Exclude buyers with <3 lifetime pre-trade transactions; trace funding 2 hops back and block candidates if >30% originate from a common parent address.
-6. **Tip Caps & Transaction Structuring:** 1.5% notional entry tip cap; place Jito tip instruction *after* swap instruction in the atomic bundle; allocate up to 0.005 SOL dedicated emergency exit budget.
+1. **Sub-Minute Sniping Abandoned:** No bonding curve sniping. Strict focus on secondary momentum on canonical PumpSwap pools **3 to 25 minutes** post-graduation.
+2. **Invariant 2: Path A+ is Dead (< $50) — Friction-Busting 80/20 Scale-Out + Local-Structure Exits:** Continuous percentage trailing (Path A+) on micro-liquidity is dead. For positions < $50, the 100% ratchet requires an unattainable +16% to +22% move just to lock in +8% net, producing an unworkable 0.14:1 R:R ratio ($3.50 loss vs $0.50 win). Replaced by Friction-Busting 80/20 Scale-Out:
+   * **TP1 ("The Friction Buster"):** Sell 80% of position at +8% to +10% gross (+9% default). On a $20 position, 80% = $16; a +9% move yields +$1.44 gross, completely covering the ~$1.50 round-trip friction for the whole trade.
+   * **The Runner:** The remaining 20% ($4) runs as a **Free Runner** with zero cost-of-capital drag, trailing with a discrete candle-low structure stop. If the runner dumps to 0, net loss is -$2.56 (vs -$3.50 on 100% stop).
+   * **Discrete Structure-Based Trailing Stop:** Stop Loss = Lowest Low of the previous two completed 1-minute candles. Absorbs 30%–40% wicks without stopping out while macro 1m trend preserves higher lows.
+   * **Momentum Time-Decay Exit:** If 2 consecutive 1-minute candles pass without making a new local high AND volume drops >40% from entry-breakout volume, exit 100% immediately.
+   * **Liquidity Collapse Exit:** Every 30 seconds, simulate a sell quote on remaining position; if estimated slippage exceeds 5.0%, market dump immediately (LP drain protection).
+3. **Invariant 3: 8-Minute Cooldown is Dead — Volume Exhaustion Consolidation + Breakout:** Entering strictly at minute 8 is dead (buys the exact moment early snipers dump on secondary retail). Replaced by dynamic market structure validation:
+   * **Minimum Time Bound:** 3-minute minimum cooldown post-graduation to bypass the literal protocol buyback cliff in minutes 0–3.
+   * **Consolidation Trigger:** Monitor 1-minute volume until it drops to < 20% of the peak 1-minute volume observed during the graduation spike (minutes 0–3), confirming early dumpers are exhausted.
+   * **Breakout Entry:** Draw resistance at the highest price established during the initial spike. Enter only when a candle closes above this resistance with buy volume > 1.5x the consolidation average.
+4. **Invariant 4: Pre-Flight Double Gate Friction Caps Remain — Ratchet Triggers Replaced by TP1 Friction Buster:** Strict pre-flight friction caps remain non-negotiable (Expected $\le 7.0\%$ in Regime A, $\le 6.0\%$ in Regime B, Stressed $\le 10.0\%$), but legacy Ratchet Triggers (+16% to +22%) are dead. They are replaced by the **+8% to +10% TP1 Friction Buster** (+9% default target) where selling 80% pays for all round-trip friction, unlocking a free 20% runner.
+5. **Invariant 5: Cluster/Burner History Checks are Dead — Real-Time Order Flow Dynamics:** Historical 2-hop funding graphs and <3 transaction heuristics are dead (trivially bypassed by syndicates using aged wallets and mixers). Replaced by Real-Time AMM Order Flow Dynamics:
+   * **Velocity of Unique Wallets (VUW):** `(Unique Buyers Current 1m) / (Unique Buyers Prior 1m)` must be &ge; 1.20 on breakout (hard rejects flat wash-trader wallet rotation ~1.0; demands retail FOMO acceleration &gt;1.5).
+   * **Aggression Ratio:** `Taker Buy SOL / Taker Sell SOL` must be &gt; 2.00 (measures actual swap mechanics into the curve; organic breakouts are heavily aggressive-buy led vs balanced wash trades).
+6. **Capital Allocation: Fixed $10–$25 Sizing is Dead — Dynamic Liquidity-Based Sizing (Capped at $25):** Hard-rejecting pools with >2% impact on fixed $20 trades starves candidate supply. Capital allocation is a dependent variable of pool liquidity:
+   * **Maximum Safe Swap:** Mathematically calculate the swap size resulting in $\le 1.5\%$ price impact: $\Delta x_{\text{sol}} = (0.015 / 1.0) \times 2.0 \times \text{sol\_reserve} = 0.030 \times \text{sol\_reserve}$.
+   * **Dynamic Sizing Rule:** $\text{Position Size} = \min(\text{Calculated Max Safe Swap}, \$25.00\text{ Active Wallet Limit})$.
+   * **Minimum Viable Floor:** If Calculated Max Safe Swap $< \$3.00$ (reserves $< 0.645\text{ SOL}$ at $\$155/\text{SOL}$), hard reject the pool (cannot overcome fixed Solana transaction overhead).
+   * **Tip Caps & Transaction Structuring:** 1.5% notional entry tip cap; place Jito tip instruction *after* swap instruction in the atomic bundle; allocate up to 0.005 SOL dedicated emergency exit budget.
 7. **Pre-Trade Risk Capacity & Hard Checks:** Verify `Stressed Loss + Exit Reserve` fits into remaining $10 daily risk budget before opening; audit mint/freeze authorities; enforce 20-minute fallback holding timeout.
 
 ---
@@ -36,7 +50,7 @@ Every service, module, and agent in this repository must strictly adhere to thes
 
 ### 2.1 Phase 1 Responsibilities (No Trading Code)
 1. **Canonical Pool Discovery:** Monitor the PumpSwap program for pool creation and migration events. Verify canonical status and identify quote asset (SOL vs USDC).
-2. **State Tracking:** Track each pool through the 8–25 minute stabilization window. Record token price, reserve levels, and market-cap tier transitions.
+2. **State Tracking:** Track each pool through the secondary window (minutes 3 to 25 post-graduation). Record token price, reserve levels, and market-cap tier transitions.
 3. **Basic Flow Telemetry:** Ingest raw swap events; compute rolling 10s, 30s, 60s volume, buy/sell transaction counts, and raw unique wallet counts.
 4. **Feed Reliability & Telemetry Audit:** Log feed completeness, stream disconnects, reconnection latency, and reserve reconciliation deltas.
 5. **Observational Watchlist States:** Maintain pool states: `MIGRATED`, `STABILIZING`, `TRACKING`, `DROPPED`.
@@ -78,15 +92,15 @@ class Phase1FalsificationGate:
         """
         Extract candidate tokens that:
         1. Graduated to PumpSwap (canonical pool detected)
-        2. Survived past 8-minute mark (post-buyback cliff)
-        3. Have measurable volume in 8–25 min window
+        2. Survived past 3-minute mark (post-protocol buyback cliff)
+        3. Have measurable volume in 3–25 min window and pass dynamic depth screen
         """
         candidates = []
         for pool in self.telemetry_data['pools']:
             if pool['status'] == 'MIGRATED' and pool['quote_asset'] == 'SOL':
                 age_at_assessment = pool.get('minutes_post_graduation', 0)
-                if age_at_assessment >= self.BUYBACK_CLIFF_MINUTES[1]:
-                    # Apply depth filter
+                if age_at_assessment >= 3.0:
+                    # Apply dynamic depth filter (>= $3.00 at <= 1.5% impact)
                     depth_ok = self._check_depth_screen(pool)
                     if depth_ok:
                         candidates.append({
@@ -101,19 +115,20 @@ class Phase1FalsificationGate:
         return candidates
     
     def _check_depth_screen(self, pool: Dict) -> bool:
-        """Check if pool can absorb $20 with <2% price impact."""
-        # Simplified constant-product model
+        """
+        Dynamic Liquidity-Based Sizing Screen:
+        Check if pool has executable depth for >= $3.00 safe swap at <= 1.5% impact (capped at $25).
+        Formula: max_safe_swap_sol = 2 * reserve_sol * (1.5 / 100)
+        """
         reserve_sol = pool.get('reserve_quote_sop', 0)
         reserve_token = pool.get('reserve_base_token', 0)
         
         if reserve_sol <= 0 or reserve_token <= 0:
             return False
             
-        # Approximate: impact ≈ swap_size / (2 * reserve)
-        swap_size_sol = 20.0 / 155.0  # Convert $20 to SOL at $155/SOL
-        estimated_impact = swap_size_sol / (2 * reserve_sol) * 100
-        
-        return estimated_impact < 2.0
+        # Max safe swap in USD at $155/SOL
+        max_safe_swap_usd = 2.0 * reserve_sol * (1.5 / 100.0) * 155.0
+        return max_safe_swap_usd >= 3.0  # Hard floor at $3.00
     
     def _model_friction(self, pool: Dict) -> float:
         """
@@ -294,18 +309,19 @@ Phase 1 is complete when the telemetry engine demonstrates:
 
 ---
 
-## 3. Phase 2: Cluster Analyzer & Risk Scoring (21 Days)
+## 3. Phase 2: Order Flow Dynamics & Risk Engine (21 Days)
 
 ### 3.1 Phase 2 Deliverables
-1. **Shared Funding Graph Traversal:** Implement 2-hop ancestry tracing for recent buyer wallets.
-2. **Cluster Risk Score Computation:** Assign `cluster_risk_score` based on funding concentration.
-3. **Fresh Burner Detection:** Flag buyers with $< 3$ lifetime pre-trade transactions.
-4. **Sybil Pattern Heuristics:** Detect coordinated launch patterns (same timing, similar amounts).
+1. **Real-Time AMM Order Flow Dynamics:** Implement Velocity of Unique Wallets ($VUW = \text{Unique Buyers Current 1m} / \text{Unique Buyers Prior 1m}$) and Aggression Ratio ($\text{Taker Buy SOL} / \text{Taker Sell SOL}$).
+2. **Wash Trading Defense:** Enforce breakout hard rejection if $VUW < 1.20$ (defeats flat wallet rotation) or Aggression Ratio $\le 2.00$ (demands buy-side curve aggression).
+3. **Authority Safety Audit:** Enforce Guardrail 7 on-chain checks (mint authority revoked, freeze authority revoked, canonical SOL quote asset).
+4. **Scrapped Heuristics:** Historical 2-hop funding graph and <3 tx burner checks are dead/superseded due to trivial syndicate bypass via aged wallets and mixers.
 
 ### 3.2 Phase 2 Acceptance Criteria
-* Cluster score correlates with post-trade pump/dump patterns ($r > 0.3$ in backtest).
-* Fresh burner exclusion reduces fake volume inflation by measurable margin.
-* No false positives on verified CEX hot wallets and liquidity routers.
+* Order Flow Dynamics engine successfully eliminates flat wallet-rotation wash trading ($VUW \sim 1.0$) with zero false-pass on syndicate patterns.
+* Organic breakout validation triggers cleanly on retail FOMO surges ($VUW \ge 1.50$, Aggression Ratio $> 2.00$).
+* Zero false positives on verified CEX hot wallets and liquidity routers.
+* 100% immediate rejection on unrevoked mint or freeze authority pools.
 
 ---
 
@@ -391,10 +407,10 @@ Phase 1 is complete when the telemetry engine demonstrates:
 
 | Risk | Probability | Impact | Mitigation |
 | :--- | :--- | :--- | :--- |
-| **Candidate supply too thin** | High | Critical | Phase 1 falsification gate kills project early |
-| **Friction > upside** | High | Critical | Path A enforced; friction budget capped at 7% |
-| **Freeze authority exploit** | Medium | Catastrophic | Mint/freeze authority checks in Phase 2 |
-| **Protocol buyback cliff misread** | Medium | High | Stabilization window shifted to 8–25 min |
+| **Candidate supply too thin** | High | Critical | Dynamic Liquidity-Based Sizing (floor $3.00, cap $25) + Phase 1 falsification gate |
+| **Friction > upside** | High | Critical | Friction-Busting 80/20 Scale-Out (TP1 sells 80% at +8%–+10% gross); Double Gate capped at 7%/6% |
+| **Freeze authority exploit** | Medium | Catastrophic | Mint/freeze authority checks enforced in Pre-Trade safety audit |
+| **Protocol buyback cliff misread** | Medium | High | 3m cooldown + Volume exhaustion consolidation (< 20% spike volume) + Breakout confirmation |
 | **Network congestion spike** | Medium | High | Tip cap enforcement; entry skipped if exceeded |
 | **Simulation overfitting** | Medium | High | Strict out-of-sample validation; no look-ahead |
 | **Operating expense drain** | High | High | Business P&L tracked monthly; shutdown trigger at negative |

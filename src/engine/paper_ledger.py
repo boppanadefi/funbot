@@ -58,15 +58,41 @@ class PaperLedger:
             return
 
         sol_spent = pos.sol_spent
-        sol_received = pos.exit_leg.sol_amount
-        venue_fees = pos.entry_leg.venue_fee_sol + pos.exit_leg.venue_fee_sol
-        tips = pos.entry_leg.jito_tip_sol + pos.exit_leg.jito_tip_sol
-        priority = (
-            pos.entry_leg.priority_fee_sol
-            + pos.entry_leg.base_fee_sol
-            + pos.exit_leg.priority_fee_sol
-            + pos.exit_leg.base_fee_sol
-        )
+
+        if pos.tp1_leg and pos.runner_leg:
+            # Friction-Busting Scale-Out (Two-Stage Exit)
+            sol_received = pos.tp1_leg.sol_amount + pos.runner_leg.sol_amount
+            venue_fees = (
+                pos.entry_leg.venue_fee_sol
+                + pos.tp1_leg.venue_fee_sol
+                + pos.runner_leg.venue_fee_sol
+            )
+            tips = (
+                pos.entry_leg.jito_tip_sol
+                + pos.tp1_leg.jito_tip_sol
+                + pos.runner_leg.jito_tip_sol
+            )
+            priority = (
+                pos.entry_leg.priority_fee_sol
+                + pos.entry_leg.base_fee_sol
+                + pos.tp1_leg.priority_fee_sol
+                + pos.tp1_leg.base_fee_sol
+                + pos.runner_leg.priority_fee_sol
+                + pos.runner_leg.base_fee_sol
+            )
+            exit_price_sol = sol_received / pos.tokens_held if pos.tokens_held > 0 else pos.exit_leg.price_sol
+        else:
+            # Single Full Exit (Stop or Timeout before TP1)
+            sol_received = pos.exit_leg.sol_amount
+            venue_fees = pos.entry_leg.venue_fee_sol + pos.exit_leg.venue_fee_sol
+            tips = pos.entry_leg.jito_tip_sol + pos.exit_leg.jito_tip_sol
+            priority = (
+                pos.entry_leg.priority_fee_sol
+                + pos.entry_leg.base_fee_sol
+                + pos.exit_leg.priority_fee_sol
+                + pos.exit_leg.base_fee_sol
+            )
+            exit_price_sol = pos.exit_leg.price_sol
 
         net_pnl_sol = sol_received - sol_spent - venue_fees - tips - priority
         net_pnl_usd = net_pnl_sol * sol_price_usd

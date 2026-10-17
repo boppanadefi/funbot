@@ -31,8 +31,8 @@ def render_paper_panel(pools: List[Dict], is_dark: bool = True) -> None:
     st.markdown(
         """
         <div style="margin-bottom: 0.8rem; font-size: 0.82rem; color: var(--text-muted);">
-            <strong>Phase 4 Guardrails 2 & 7:</strong> Evaluates simulated Path A+ executions 
-            (strictly 2 swaps total, 0 tranche dilution, dynamic 10%–15% trailing stop, and 20m fallback timeout) 
+            <strong>Phase 4 Guardrails 2 & 7:</strong> Evaluates simulated Local-Structure & Time-Decay Exits with Friction-Busting Scale-Out 
+            (Stop Loss = Lowest Low of previous two 1m candles to absorb 30–40% wicks; 2-candle stagnation + >40% vol drop time-decay; 30s >5% slippage LP drain dump; TP1 sells 80% @ +8%–+10% gross, 20% runner) 
             across 60% in-sample and 40% out-of-sample datasets under a hard $10.00 max drawdown ceiling.
         </div>
         """,
@@ -47,7 +47,26 @@ def render_paper_panel(pools: List[Dict], is_dark: bool = True) -> None:
         pnl_usd = active_pos.get("unrealized_pnl_usd", 0.0)
         pnl_pct = active_pos.get("unrealized_return_pct", 0.0)
         pnl_color = "var(--green)" if pnl_usd >= 0 else "var(--red)"
-        ratchet_badge = '<span class="badge badge-green">RATCHET LOCKED (+8%)</span>' if active_pos.get("ratchet_activated") else '<span class="badge badge-amber">STOP TRAILING</span>'
+        is_runner = active_pos.get("state") == "RUNNER_ACTIVE" or active_pos.get("tp1_activated")
+        struct_stop = active_pos.get("structure_stop_price_sol")
+        lowest_low = active_pos.get("lowest_low_2m_candles_sol")
+
+        if is_runner:
+            badge_html = '<span class="badge badge-green">TP1 LOCKED (80% @ +9%) • FREE RUNNER (20%)</span>'
+            if struct_stop:
+                stop_label = f"{fmt_sol_price(struct_stop)} SOL (Lowest Low 2m Structure)"
+            else:
+                stop_label = f"{fmt_sol_price(active_pos['current_stop_price_sol'])} SOL (Runner Trailing)"
+            stop_color = "var(--green)"
+        else:
+            badge_html = '<span class="badge badge-amber">TARGETING TP1 (+9.0%)</span>'
+            if struct_stop:
+                stop_label = f"{fmt_sol_price(struct_stop)} SOL (Lowest Low 2m Structure)"
+            else:
+                stop_label = f"{fmt_sol_price(active_pos['current_stop_price_sol'])} SOL (Hard Stop -10%)"
+            stop_color = "var(--amber)"
+
+        tp1_price = active_pos.get("tp1_price_sol", active_pos.get("entry_price_sol", 0.0) * 1.09)
 
         st.markdown(
             f"""
@@ -56,7 +75,7 @@ def render_paper_panel(pools: List[Dict], is_dark: bool = True) -> None:
                     <div>
                         <span style="font-weight: 800; font-size: 1.05rem; color: var(--blue);">🔵 LIVE OPEN PAPER POSITION:</span>
                         <span class="mono" style="font-weight: 700; margin-left: 0.5rem;">{active_pos['position_id']}</span>
-                        <span style="margin-left: 0.6rem;">{ratchet_badge}</span>
+                        <span style="margin-left: 0.6rem;">{badge_html}</span>
                     </div>
                     <div class="mono" style="font-size: 1.15rem; font-weight: 800; color: {pnl_color};">
                         {pnl_pct:+.2f}% (${pnl_usd:+.2f} USD)
@@ -65,9 +84,11 @@ def render_paper_panel(pools: List[Dict], is_dark: bool = True) -> None:
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.8rem; font-size: 0.82rem; color: var(--text-muted);">
                     <div>Token: <a href="https://dexscreener.com/solana/{active_pos['token_mint']}" target="_blank" style="color: var(--blue); text-decoration: none;"><strong class="mono">{active_pos['token_mint'][:10]}... ↗</strong></a></div>
                     <div>Entry: <strong class="mono">{fmt_sol_price(active_pos['entry_price_sol'])} SOL</strong></div>
+                    <div>TP1 Target: <strong class="mono" style="color: var(--green);">{fmt_sol_price(tp1_price)} SOL (+9%)</strong></div>
                     <div>Current: <strong class="mono">{fmt_sol_price(active_pos['current_price_sol'])} SOL</strong></div>
                     <div>Peak: <strong class="mono">{fmt_sol_price(active_pos['peak_price_sol'])} SOL</strong></div>
-                    <div>Stop: <strong class="mono" style="color: var(--amber);">{fmt_sol_price(active_pos['current_stop_price_sol'])} SOL</strong></div>
+                    <div>Stop: <strong class="mono" style="color: {stop_color};">{stop_label}</strong></div>
+                    <div>Lowest Low (2m): <strong class="mono">{fmt_sol_price(lowest_low) if lowest_low else 'Forming 2m...'} SOL</strong></div>
                     <div>Elapsed: <strong>{active_pos.get('elapsed_minutes', 0.0)}m / 20.0m</strong></div>
                 </div>
             </div>
@@ -216,6 +237,16 @@ def render_paper_panel(pools: List[Dict], is_dark: bool = True) -> None:
         token_short = f"{mint[:6]}...{mint[-4:]}"
         token_link = f"<a href='https://dexscreener.com/solana/{mint}' target='_blank' style='color: var(--blue); text-decoration: none; font-weight: 600;'>{token_short} ↗</a>"
 
+        exit_r = t.get("exit_reason", "UNKNOWN")
+        if exit_r in ("CLOSED_TIME_DECAY", "TIME_DECAY_STAGNATION"):
+            reason_badge = f"<span class='badge badge-amber'>{exit_r}</span>"
+        elif exit_r in ("CLOSED_LIQUIDITY_DRAIN", "LIQUIDITY_COLLAPSE_DRAIN"):
+            reason_badge = f"<span class='badge badge-red'>{exit_r}</span>"
+        elif exit_r in ("STRUCTURE_TRAILING_STOP",):
+            reason_badge = f"<span class='badge' style='background: rgba(147, 51, 234, 0.15); color: #c084fc; border: 1px solid rgba(147, 51, 234, 0.3);'>{exit_r}</span>"
+        else:
+            reason_badge = f"<span class='badge badge-blue'>{exit_r}</span>"
+
         row = (
             f"<tr>"
             f"<td class='mono'><strong>{t['position_id']}</strong></td>"
@@ -224,7 +255,7 @@ def render_paper_panel(pools: List[Dict], is_dark: bool = True) -> None:
             f"<td class='mono'>{fmt_sol_price(t['entry_price_sol'])}</td>"
             f"<td class='mono'>{fmt_sol_price(t['exit_price_sol'])}</td>"
             f"<td class='mono'>{t['duration_minutes']:.1f}m</td>"
-            f"<td><span class='badge badge-blue'>{t['exit_reason']}</span></td>"
+            f"<td>{reason_badge}</td>"
             f"<td class='mono' style='color: {pnl_color};'><strong>{t['net_return_pct']:+.1f}%</strong></td>"
             f"<td class='mono' style='color: {pnl_color};'><strong>${pnl:+.2f}</strong></td>"
             f"<td>{badge}</td>"
@@ -235,7 +266,7 @@ def render_paper_panel(pools: List[Dict], is_dark: bool = True) -> None:
     table_body = "".join(table_rows)
     table_html = (
         f"<div class='metric-card' style='overflow-x: auto;'>"
-        f"<div style='font-weight: 700; font-size: 0.95rem; margin-bottom: 0.6rem;'>Path A+ Paper Trading Execution Ledger</div>"
+        f"<div style='font-weight: 700; font-size: 0.95rem; margin-bottom: 0.6rem;'>Friction-Busting Scale-Out Paper Trading Execution Ledger</div>"
         f"<table class='data-table'>"
         f"<thead>"
         f"<tr>"

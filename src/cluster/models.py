@@ -66,3 +66,8 @@ class ClusterRiskScore:
     composite_risk_score: float  # [0.0 - 1.0], 0.0 is perfect, 1.0 is maximum risk
     is_approved: bool  # True if passes all Guardrail 5 & 7 filters
     rejection_reasons: List[str] = field(default_factory=list)
+    # Fix 4: Real-Time Order Flow Dynamics (VUW & Aggression Ratio)
+    vuw: float = 0.0
+    aggression_ratio: float = 0.0
+    order_flow_passed: bool = True
+    order_flow_classification: str = "ORGANIC_RETAIL"

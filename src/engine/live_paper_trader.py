@@ -19,6 +19,8 @@ from src.cost.double_gate import PreFlightDoubleGate
 from src.engine.models import PaperPosition, PositionState
 from src.engine.paper_ledger import PaperLedger
 from src.engine.simulator import PathASimulator
+from src.engine.market_structure import MarketStructureTracker
+from src.engine.order_flow import OrderFlowDynamicsEngine
 from src.live.circuit_breaker import DailyCircuitBreaker
 from src.live.kill_switch import EmergencyKillSwitch
 from src.telemetry.live_market_feed import LiveMarketFeed
@@ -37,16 +39,20 @@ class LivePaperTradingEngine:
         state_file: str = "data/live/active_paper_position.json",
         sol_price_usd: float = 155.0,
         position_notional_usd: float = 15.0,
-        min_age_minutes: float = 8.0,
+        min_age_minutes: float = 3.0,
         max_age_minutes: float = 25.0,
         circuit_breaker: Optional[DailyCircuitBreaker] = None,
         kill_switch: Optional[EmergencyKillSwitch] = None,
+        market_structure_tracker: Optional[MarketStructureTracker] = None,
+        order_flow_engine: Optional[OrderFlowDynamicsEngine] = None,
     ):
         self.ledger = PaperLedger(db_path=db_path)
         self.sim = PathASimulator(ledger=self.ledger, sol_price_usd=sol_price_usd)
         self.circuit_breaker = circuit_breaker or DailyCircuitBreaker()
         self.kill_switch = kill_switch or EmergencyKillSwitch()
         self.double_gate = PreFlightDoubleGate()
+        self.market_structure = market_structure_tracker or MarketStructureTracker(min_cooldown_minutes=min_age_minutes)
+        self.order_flow = order_flow_engine or OrderFlowDynamicsEngine()
         self.live_feed = LiveMarketFeed(
             sol_price_usd=sol_price_usd,
             min_age_minutes=min_age_minutes,
@@ -97,15 +103,17 @@ class LivePaperTradingEngine:
                     regime=data["regime"],
                     market_cap_sol=data.get("market_cap_sol", 380.0),
                     entry_price_sol=data["entry_price_sol"],
-                    ratchet_trigger_gross_pct=data.get("ratchet_trigger_gross_pct", 18.0),
+                    tp1_target_gross_pct=data.get("tp1_target_gross_pct", 0.09),
                     position_notional_usd=data.get("position_notional_usd", self.position_notional_usd),
+                    trailing_pct=data.get("runner_trailing_pct", 0.15),
                     entry_time=entry_dt,
                 )
                 self._current_pos.peak_price_sol = data.get("peak_price_sol", data["entry_price_sol"])
                 self._current_pos.current_stop_price_sol = data.get("current_stop_price_sol", self._current_pos.current_stop_price_sol)
-                self._current_pos.ratchet_activated = data.get("ratchet_activated", False)
-                if self._current_pos.ratchet_activated:
-                    self._current_pos.state = PositionState.RATCHETED
+                self._current_pos.tp1_activated = data.get("tp1_activated", False)
+                self._current_pos.ratchet_activated = self._current_pos.tp1_activated
+                if self._current_pos.tp1_activated:
+                    self._current_pos.state = PositionState.RUNNER_ACTIVE
         except Exception as e:
             logger.error("Failed to load active paper position: %s", e)
             self._current_pos = None
@@ -113,19 +121,25 @@ class LivePaperTradingEngine:
     def _save_active_position(self, current_price_sol: Optional[float] = None) -> None:
         """Persists currently open position state to file."""
         tmp = self.state_file.with_suffix(".tmp")
-        if not self._current_pos or self._current_pos.state in (
-            PositionState.CLOSED_TRAIL,
-            PositionState.CLOSED_STOP,
-            PositionState.CLOSED_TIMEOUT,
-            PositionState.CLOSED_EMERGENCY,
-        ):
+        if not self._current_pos or self._current_pos.is_closed:
             out = {"is_active": False}
         else:
             curr_p = current_price_sol or self._current_pos.entry_price_sol
             now = datetime.now(timezone.utc)
             elapsed_m = (now - self._current_pos.entry_time).total_seconds() / 60.0
-            unrealized_return_pct = ((curr_p - self._current_pos.entry_price_sol) / self._current_pos.entry_price_sol) * 100.0 if self._current_pos.entry_price_sol > 0 else 0.0
-            unrealized_pnl_usd = (unrealized_return_pct / 100.0) * self._current_pos.position_notional_usd
+
+            if self._current_pos.tp1_activated and self._current_pos.tp1_leg:
+                # Two-stage scale out: TP1 secured + runner live
+                sol_received_so_far = self._current_pos.tp1_leg.sol_amount
+                runner_sol_val = self._current_pos.runner_tokens_held * curr_p
+                total_sol = sol_received_so_far + runner_sol_val
+                friction_so_far = self._current_pos.entry_leg.total_friction_sol + self._current_pos.tp1_leg.total_friction_sol
+                net_sol = total_sol - self._current_pos.sol_spent - friction_so_far
+                unrealized_pnl_usd = net_sol * self.sol_price_usd
+                unrealized_return_pct = (net_sol / self._current_pos.sol_spent) * 100.0 if self._current_pos.sol_spent > 0 else 0.0
+            else:
+                unrealized_return_pct = ((curr_p - self._current_pos.entry_price_sol) / self._current_pos.entry_price_sol) * 100.0 if self._current_pos.entry_price_sol > 0 else 0.0
+                unrealized_pnl_usd = (unrealized_return_pct / 100.0) * self._current_pos.position_notional_usd
 
             out = {
                 "is_active": True,
@@ -139,9 +153,18 @@ class LivePaperTradingEngine:
                 "current_price_sol": curr_p,
                 "peak_price_sol": self._current_pos.peak_price_sol,
                 "current_stop_price_sol": self._current_pos.current_stop_price_sol,
-                "ratchet_trigger_price_sol": self._current_pos.ratchet_trigger_price_sol,
+                "tp1_target_gross_pct": self._current_pos.tp1_target_gross_pct,
+                "tp1_price_sol": self._current_pos.tp1_price_sol,
+                "tp1_activated": self._current_pos.tp1_activated,
+                "tp1_size_pct": self._current_pos.tp1_size_pct,
+                "runner_size_pct": self._current_pos.runner_size_pct,
+                "runner_tokens_held": self._current_pos.runner_tokens_held,
+                "runner_trailing_pct": self._current_pos.runner_trailing_pct,
+                "ratchet_trigger_price_sol": self._current_pos.tp1_price_sol,
                 "ratchet_floor_price_sol": self._current_pos.ratchet_floor_price_sol,
-                "ratchet_activated": self._current_pos.ratchet_activated,
+                "ratchet_activated": self._current_pos.tp1_activated,
+                "structure_stop_price_sol": self._current_pos.structure_stop_price_sol,
+                "lowest_low_2m_candles_sol": self._current_pos.lowest_low_2m_candles_sol,
                 "state": self._current_pos.state.value,
                 "elapsed_minutes": round(elapsed_m, 1),
                 "unrealized_return_pct": round(unrealized_return_pct, 2),
@@ -246,7 +269,24 @@ class LivePaperTradingEngine:
         if vol_5m < 300.0:
             return False, f"Momentum Gate: Stagnant 5m volume (${vol_5m:,.0f} < $300)"
 
-        return True, "Passed All 4 Gates"
+        # 5. Gate 5 (Invariant 3): Volume Exhaustion Consolidation + Structural Breakout Gate
+        ms_passed, ms_reason = self.market_structure.evaluate_structural_break(pool, quote, now)
+        if not ms_passed:
+            return False, ms_reason
+
+        # 6. Gate 6 (Invariant 5 / Fix 4): Real-Time Order Flow Dynamics Gate
+        # Replaces historical genealogy with real-time AMM order flow dynamics (VUW >= 1.2, Aggression > 2.0)
+        of_metrics = self.order_flow.evaluate_order_flow(
+            pool_address=pool.get("pool_address", ""),
+            token_mint=pool.get("token_mint", ""),
+            quote=quote,
+            now=now,
+        )
+        if quote and ("vuw" in quote or "unique_buyers_current_1m" in quote or "aggression_ratio" in quote or "taker_buy_sol" in quote):
+            if not of_metrics.is_approved:
+                return False, f"Order Flow Dynamics Gate: {'; '.join(of_metrics.rejection_reasons)}"
+
+        return True, "Passed All Candidate Gates (Including Invariant 3 Structural Breakout & Invariant 5 Order Flow Dynamics)"
 
     def on_market_tick(self, pools: List[Dict], current_time: Optional[datetime] = None) -> Optional[Dict]:
         """
@@ -261,18 +301,26 @@ class LivePaperTradingEngine:
             target_pool = next((p for p in pools if p.get("pool_address") == self._current_pos.pool_address), None)
             if target_pool and target_pool.get("current_sol_reserve", 0) > 0 and target_pool.get("current_token_reserve", 0) > 0:
                 current_price_sol = target_pool["current_sol_reserve"] / target_pool["current_token_reserve"]
+                current_token_reserve = float(target_pool["current_token_reserve"])
             else:
                 # Derive price from market cap or entry price
                 current_price_sol = self._current_pos.peak_price_sol
+                current_token_reserve = None
 
-            updated = self.sim.update_price_tick(self._current_pos, current_price_sol, now)
+            # Fetch live quote for 1m volume & simulated sell slippage
+            quote = self.live_feed.get_live_token_quote(self._current_pos.token_mint) if self.live_feed else None
+            vol_1m = float(quote.get("volume_1m_usd", 0.0)) if quote else 0.0
 
-            if updated.state in (
-                PositionState.CLOSED_TRAIL,
-                PositionState.CLOSED_STOP,
-                PositionState.CLOSED_TIMEOUT,
-                PositionState.CLOSED_EMERGENCY,
-            ):
+            updated = self.sim.update_price_tick(
+                self._current_pos,
+                current_price_sol,
+                now,
+                vol_1m_usd=vol_1m,
+                quote=quote,
+                current_token_reserve=current_token_reserve,
+            )
+
+            if updated.is_closed:
                 logger.info(
                     "Paper Position %s CLOSED via %s (Net P&L: $%.2f)",
                     updated.position_id, updated.exit_reason, updated.realized_net_pnl_usd
@@ -373,6 +421,14 @@ class LivePaperTradingEngine:
         pos_id = f"live_paper_{int(now.timestamp()) % 100000}"
         ratchet_pct = best_gate.ratchet_trigger_gross_pct
 
+        breakout_vol = float(candidate.get("breakout_buy_vol") or candidate.get("volume_1m_usd") or 0.0)
+
+        # Fix 5: Dynamic Position Sizing (min(Calculated Max Safe Swap, $25 active wallet limit))
+        entry_position_usd = best_gate.dynamic_position_size_usd or self.position_notional_usd
+
+        # Invariant 4: TP1 Friction Buster target (+8% to +10%, default +9%) replaces Ratchet Trigger
+        tp1_target = (best_gate.tp1_target_gross_pct / 100.0) if hasattr(best_gate, "tp1_target_gross_pct") else 0.09
+
         self._current_pos = self.sim.open_position(
             position_id=pos_id,
             pool_address=pool_addr,
@@ -380,12 +436,17 @@ class LivePaperTradingEngine:
             regime=regime,
             market_cap_sol=mc_sol,
             entry_price_sol=entry_price,
+            tp1_target_gross_pct=tp1_target,
             ratchet_trigger_gross_pct=ratchet_pct,
-            position_notional_usd=self.position_notional_usd,
+            position_notional_usd=entry_position_usd,
             entry_time=now,
+            entry_breakout_volume_usd=breakout_vol,
         )
         self.traded_tokens.add(token_mint)
-        logger.info("Opened NEW live paper position %s on %s ($%.2f)", pos_id, token_mint, self.position_notional_usd)
+        logger.info(
+            "Opened NEW live paper position %s on %s (Dynamically sized to $%.2f at <=1.5%% impact)",
+            pos_id, token_mint, entry_position_usd
+        )
         self._save_active_position(current_price_sol=entry_price)
         return self.get_active_position()
 

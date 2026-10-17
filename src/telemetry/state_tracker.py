@@ -1,7 +1,7 @@
 """
 Pool Lifecycle & Stabilization State Tracker.
-Enforces Invariant 1 (8–25m secondary momentum window) and
-Invariant 3 (bypassing 0–5m & 5–8m BOOST buyback cliffs).
+Enforces Invariant 1 (3–25m secondary momentum window) and
+Invariant 3 (bypassing 0–3m protocol buyback cliff, requiring volume exhaustion consolidation + structural breakout).
 """
 
 from dataclasses import dataclass, field
@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 
 class PoolState(Enum):
     MIGRATED = "MIGRATED"
-    STABILIZING = "STABILIZING"           # 0 to 8 minutes (cooling period)
-    ACTIVE_WINDOW = "ACTIVE_WINDOW"       # 8 to 25 minutes (secondary momentum zone)
+    STABILIZING = "STABILIZING"           # 0 to 3 minutes (cooling period bypassing protocol buyback cliff)
+    ACTIVE_WINDOW = "ACTIVE_WINDOW"       # 3 to 25 minutes (market structure & structural breakout evaluation zone)
     EXPIRED = "EXPIRED"                   # > 25 minutes (monitoring window closed)
     DROPPED = "DROPPED"                   # Rugged, zero volume, or abnormal failure
 
@@ -95,10 +95,10 @@ class PoolStateTracker:
         pool.last_update_ts = datetime.now(timezone.utc)
 
         if age < self.min_age_minutes:
-            # 0 to 8 min: Cooling window (Bypassing BOOST cliff)
+            # 0 to 3 min: Cooling window (Bypassing protocol cliff)
             pool.state = PoolState.STABILIZING
         elif self.min_age_minutes <= age <= self.max_age_minutes:
-            # 8 to 25 min: Active candidate evaluation window
+            # 3 to 25 min: Active candidate evaluation window
             pool.state = PoolState.ACTIVE_WINDOW
         else:
             # > 25 min: Expired
@@ -107,7 +107,7 @@ class PoolStateTracker:
         return pool.state
 
     def get_active_candidates(self) -> List[TrackedPool]:
-        """Return all pools currently within the valid 8–25 minute evaluation window."""
+        """Return all pools currently within the valid 3–25 minute evaluation window."""
         active = []
         for addr, pool in self.pools.items():
             state = self.update_pool_tick(addr)

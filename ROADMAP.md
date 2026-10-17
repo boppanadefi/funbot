@@ -21,10 +21,10 @@ graph TD
     UI1["Phase 1.5: Streamlit Telemetry Dashboard<br/><i>(Real-Time Falsification Monitor)</i>"]:::ui
     G1{"Phase 1 Falsification Gate<br/>≥3 cand/day | ≥20% depth | ≤7% friction"}:::gate
 
-    P2["Phase 2: Cluster Analyzer & Risk Engine<br/><i>(21 Days, 2-Hop Graph + Burners)</i>"]:::core
+    P2["Phase 2: Order Flow Dynamics & Risk Engine<br/><i>(21 Days, Real-Time VUW + Aggression)</i>"]:::core
     P3["Phase 3: Dynamic Cost & Double Gate Engine<br/><i>(14 Days, Tiered PumpSwap Fees + Jito Tips)</i>"]:::core
 
-    P4["Phase 4: Paper Trading & Validation Pipeline<br/><i>(28 Days, Path A+ 100% Single Exit Simulation)</i>"]:::observational
+    P4["Phase 4: Paper Trading & Validation Pipeline<br/><i>(28 Days, Friction-Busting 80/20 Scale-Out)</i>"]:::observational
     G2{"Phase 4 Out-of-Sample Gate<br/>Positive Expectancy | Max DD < $10"}:::gate
 
     P5["Phase 5: Live Micro-Trading Control Center<br/><i>(Operator Review, $10 Daily Halt, Kill Switch)</i>"]:::ui
@@ -98,8 +98,7 @@ graph TD
 * **Coupling & Overlap with Phase 1:**
   * **Data Dependency:** Consumes unique buyer public keys from Phase 1 flow telemetry.
   * **Semantic Dependency:** Wraps candidate tokens from Phase 1 and decorates them with `cluster_risk_score`, `burner_ratio`, and `safety_flag`.
-  * **File Overlap:** Shares `src/models/token.py` and `src/utils/rpc_client.py`.
-* **Invariants Enforced:** Guardrail 5 (exclude <3 tx burner wallets, 2-hop funding graph >30% parent concentration check) and Guardrail 7 (mint & freeze authority verification).
+* **Invariants Enforced:** Invariant 5 (Real-Time AMM Order Flow Dynamics: VUW $\ge 1.20$, Aggression Ratio $> 2.00$; legacy 2-hop funding graph and <3 tx checks dead) and Guardrail 7 (mint & freeze authority verification).
 
 ---
 
@@ -117,8 +116,7 @@ graph TD
 * **Coupling & Overlap:**
   * **Data Dependency:** Consumes empirical depth and reserve snapshots from Phase 1 to fit the slippage model.
   * **Semantic Dependency:** Exposes `evaluate_preflight_double_gate(pool_state, cluster_score) -> GateResult`.
-  * **File Overlap:** Modifies `config/risk_limits.yaml`.
-* **Invariants Enforced:** Guardrail 4 (dual-hurdle pre-flight gate: $C_{\text{expected}} \le 7.0\% / 6.0\%$, stress cost $\le 10\%$, profit hurdle $+16\%–+22\%$ / $+12\%–+16\%$) and Guardrail 6 (1.5% notional tip cap).
+* **Invariants Enforced:** Invariant 4 (Pre-Flight Double Gate: $C_{\text{expected}} \le 7.0\% / 6.0\%$, stress cost $\le 10\%$, legacy Ratchet Triggers dead, replaced by +8% to +10% TP1 Friction Buster), Capital Allocation (Dynamic Liquidity-Based Sizing capped at $25, floor $3.00), and Guardrail 6 (1.5% notional tip cap).
 
 ---
 
@@ -135,7 +133,7 @@ graph TD
   * **Integration Hub:** Glues telemetry signals, cluster safety, and dynamic cost accounting into a deterministic paper execution engine.
   * **Data Flow Consumed:** Full historical stream split 60% in-sample / 40% chronologically contiguous out-of-sample.
 * **Invariants Enforced:**
-  * Guardrail 2: **Path A+ (100% Dynamic Trailing Single Exit)**. Strictly enforces 2 swaps total, 0 tranche dilution.
+  * Guardrail 2: **Friction-Busting Scale-Out (Modified Path B)**. Path A+ prohibited for positions < $50. Two-stage exit: TP1 (80% at +8%–+10% gross) covers round-trip friction; remaining 20% free runner trails with a 15% stop with zero cost-of-capital drag.
   * Guardrail 7: Enforces $10 maximum daily loss capacity and 20-minute fallback holding timeout.
 
 ---

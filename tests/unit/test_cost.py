@@ -116,16 +116,40 @@ def test_preflight_double_gate():
     # Ratchet trigger typically between +16% and +22%
     assert 16.0 <= res.ratchet_trigger_gross_pct <= 22.0
 
-    # Candidate with shallow reserve failing depth impact
+    # Candidate with shallow reserve failing depth impact (< $3.00 dynamic floor)
     res_shallow = gate.evaluate(
         pool_address="PoolShallow",
         token_mint="TokenShallow",
         market_cap_sol=390.0,
-        current_sol_reserve=1.5,
+        current_sol_reserve=0.5,  # Max safe swap $2.33 < $3.00 minimum viable threshold
         position_notional_usd=15.0,
     )
     assert res_shallow.is_passed is False
     assert any("Depth inadequate" in r for r in res_shallow.rejection_reasons)
+
+    # Static mode without dynamic sizing: 1.5 SOL reserve fails $15 swap (> 2.0% impact)
+    res_shallow_static = gate.evaluate(
+        pool_address="PoolShallowStatic",
+        token_mint="TokenShallowStatic",
+        market_cap_sol=390.0,
+        current_sol_reserve=1.5,
+        position_notional_usd=15.0,
+        use_dynamic_sizing=False,
+    )
+    assert res_shallow_static.is_passed is False
+    assert any("Depth inadequate" in r for r in res_shallow_static.rejection_reasons)
+
+    # Dynamic sizing auto-resizes 1.5 SOL pool to $6.98 (<= 1.5% impact)
+    res_dynamic_sized = gate.evaluate(
+        pool_address="PoolDynamic",
+        token_mint="TokenDynamic",
+        market_cap_sol=390.0,
+        current_sol_reserve=1.5,
+        position_notional_usd=15.0,
+        use_dynamic_sizing=True,
+    )
+    assert 6.95 <= res_dynamic_sized.dynamic_position_size_usd <= 7.00
+    assert not any("Depth inadequate" in r for r in res_dynamic_sized.rejection_reasons)
 
     # Candidate failing Phase 2 cluster safety
     bad_cluster = ClusterRiskScore(

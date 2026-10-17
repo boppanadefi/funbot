@@ -66,10 +66,29 @@ class Phase1FalsificationGate:
         report["candidates_per_day"] = round(cands_per_day, 2)
         report["total_secondary_candidates"] = len(candidates)
 
-        # Depth Screen Pass Rate ($20 test notional with < 2.0% impact)
-        depth_passes = [c for c in candidates if c.get("price_impact_20usd_pct", 10.0) < 2.0]
+        # Fix 5: Dynamic Liquidity-Based Sizing Depth Screen
+        # Replaces hard-rejecting >2% impact for static $20 swap.
+        # Pool passes if price_impact_20usd_pct < 2.0% OR Calculated Max Safe Swap >= $3.00 (at 1.5% impact)
+        def _is_depth_viable(c: Dict) -> bool:
+            if c.get("price_impact_20usd_pct", 10.0) < 2.0:
+                return True
+            if c.get("is_dynamically_viable") is not None:
+                return bool(c["is_dynamically_viable"])
+            if c.get("dynamic_position_size_usd", 0.0) >= 3.00:
+                return True
+            if c.get("max_safe_swap_usd", 0.0) >= 3.00:
+                return True
+            sol_res = float(c.get("current_sol_reserve") or c.get("sol_reserve") or 0.0)
+            if sol_res > 0.0:
+                # Max safe swap in SOL = (1.5 / 100) * 2 * sol_res = 0.030 * sol_res
+                max_safe_usd = 0.030 * sol_res * 155.0
+                return max_safe_usd >= 3.00
+            return False
+
+        depth_passes = [c for c in candidates if _is_depth_viable(c)]
         depth_pass_rate = len(depth_passes) / len(candidates) if candidates else 0.0
         report["depth_pass_rate_pct"] = round(depth_pass_rate * 100.0, 1)
+        report["dynamic_sizing_applied"] = True
 
         # Friction Feasibility (Modeled friction <= 7.0%)
         frictions = [c.get("modeled_friction_pct", 99.0) for c in candidates]

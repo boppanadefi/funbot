@@ -1,23 +1,46 @@
 # The 7 Invariant System Mitigations Configuration
 # Source: bot.md (v2.5) & build.md (v2.5)
 
-# Invariant 1 & 3: Timing Windows
+# Invariant 1: Timing Window
 timing:
-  min_age_minutes: 8.0          # Enforces 8-minute post-graduation stabilization cooldown
+  min_age_minutes: 3.0          # Minimum 3-minute cooldown (avoids literal protocol buyback cliff, drops 8m hard wait)
   max_age_minutes: 25.0         # Upper limit for secondary momentum window
-  buyback_cliff_window: [5.0, 8.0]  # Window where protocol buyback ends and volume collapses
+  buyback_cliff_window: [0.0, 3.0]  # Initial protocol buyback cliff window
   max_holding_timeout_minutes: 20.0 # Guardrail 7: Hard fallback liquidation timeout
 
-# Invariant 2: Exit Architecture (Path A+ Only)
+# Invariant 3: Market Structure & Timing Architecture (Volume Consolidation + Structural Break)
+market_structure:
+  mode: "VOLUME_CONSOLIDATION_STRUCTURAL_BREAK"
+  min_cooldown_minutes: 3.0                 # Minimum 3-minute cooldown
+  spike_window_minutes: 3.0                 # Window to observe initial graduation spike peak price & volume (minutes 0-3)
+  consolidation_volume_threshold_pct: 0.20  # 1m volume must drop to <20% of spike peak 1m volume (exhaustion of early dumpers)
+  breakout_buy_volume_multiplier: 1.50      # Breakout buy volume must exceed 1.5x consolidation average
+
+# Invariant 2: Exit Architecture (Friction-Busting Scale-Out Mandatory for <$50)
 exit_strategy:
-  mode: "PATH_A_PLUS"
-  prohibit_tranche_exits: true  # Scaled exits (Path B) strictly forbidden for <$50
-  total_swaps: 2                # 1 entry leg + 1 full liquidation leg
-  initial_profit_hurdle_regime_a: 0.18  # +18% gross hurdle
-  initial_profit_hurdle_regime_b: 0.14  # +14% gross hurdle
-  ratchet_net_lock_min: 0.08    # +8% net locked once hurdle crossed
-  ratchet_net_lock_max: 0.10    # +10% net locked
-  trailing_stop_pct: 0.12       # 12% trailing stop below peak executable price
+  mode: "FRICTION_BUSTING_SCALE_OUT"
+  scale_out_mandatory_under_usd: 50.0  # Path A+ prohibited for positions < $50
+  prohibit_tranche_exits: false        # Friction-Busting Scale-Out replaces pure single exit
+  total_swaps: 3                       # 1 entry leg + up to 2 exit legs (TP1 80% + Runner 20%)
+  tp1_size_pct: 0.80                   # TP1: Sell 80% of position
+  tp1_target_gross_pct: 0.09           # Modest, achievable +9.0% gross target (range +8% to +10%)
+  tp1_target_gross_pct_min: 0.08       # Minimum acceptable TP1 gross target (+8%)
+  tp1_target_gross_pct_max: 0.10       # Maximum acceptable TP1 gross target (+10%)
+  runner_size_pct: 0.20                # Free runner: Retain 20% with zero cost-of-capital drag
+  runner_trailing_pct: 0.15            # Wide 15% trailing stop below peak price for runner
+  protective_stop_loss_pct: 0.10       # Protective stop at -10% before TP1
+  # Fix 3: Local-Structure & Time-Decay Exits
+  structure_trailing_lookback_candles: 2 # Trailing stop based on Lowest Low of previous 2 completed 1m candles
+  momentum_decay_stagnant_candles: 2     # Exit if 2 consecutive 1m candles without new high
+  momentum_decay_volume_drop_pct: 0.40   # AND volume drops > 40% from entry-breakout volume
+  liquidity_collapse_slippage_pct: 0.05  # Exit immediately if estimated sell slippage > 5%
+  liquidity_check_interval_seconds: 30.0 # Check liquidity/slippage every 30 seconds
+  # Backward compatibility aliases
+  initial_profit_hurdle_regime_a: 0.09
+  initial_profit_hurdle_regime_b: 0.09
+  ratchet_net_lock_min: 0.08
+  ratchet_net_lock_max: 0.10
+  trailing_stop_pct: 0.15
 
 # Invariant 4: Dual-Hurdle Double Gate
 preflight_gate:
@@ -30,17 +53,26 @@ preflight_gate:
     min_gross_profit_hurdle_pct: 14.00  # Midpoint of 12-16%
     max_stress_cost_pct: 10.00
 
-# Invariant 5: Cluster & Burner Risk Thresholds (Phase 2)
+# Invariant 5: Real-Time Order Flow Dynamics (Fix 4: Replaces Scrapped Historical Genealogy)
+order_flow_dynamics:
+  mode: "REAL_TIME_ORDER_FLOW_DYNAMICS"
+  min_vuw_ratio: 1.20          # Velocity of Unique Wallets >= 1.2 on breakout (Current 1m / Prior 1m)
+  min_aggression_ratio: 2.00    # Taker Buy SOL / Taker Sell SOL > 2.0 (aggressive retail FOMO into AMM)
+  scrapped_historical_genealogy: true
+
+# Legacy cluster risk configuration (retained for backward compatibility)
 cluster_risk:
-  min_pretrade_lifetime_txs: 3  # Buyers with <3 txs flagged as fresh burners
-  max_common_parent_funding_pct: 30.0  # Block if >30% funded by same 2-hop ancestor
+  min_pretrade_lifetime_txs: 3  # Legacy burner threshold
+  max_common_parent_funding_pct: 30.0  # Legacy funding cutoff
   block_mint_authority: true    # Mint authority must be revoked
   block_freeze_authority: true  # Freeze authority must be revoked
 
-# Invariant 6: Tip Caps & Sizing
+# Invariant 6: Tip Caps & Sizing (Fix 5: Dynamic Liquidity-Based Sizing)
 execution:
-  min_position_usd: 10.00
-  max_position_usd: 25.00
+  dynamic_sizing_enabled: true
+  max_acceptable_impact_pct: 1.50   # Exact swap size in SOL yielding <= 1.5% price impact
+  min_position_usd: 3.00           # Hard reject if Calculated Max Swap < $3.00 (Solana tx overhead floor)
+  max_position_usd: 25.00          # Active wallet limit ($25.00)
   target_position_usd: 15.00
   max_concurrent_positions: 1   # Single position at a time
   entry_tip_cap_pct: 1.50

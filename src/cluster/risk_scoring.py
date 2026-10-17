@@ -15,11 +15,13 @@ from src.cluster.burner_detection import BurnerWalletDetector
 from src.cluster.funding_graph import FundingGraphAnalyzer
 from src.cluster.sybil_heuristics import SybilDetector
 from src.cluster.safety_checks import TokenSafetyAuditor
+from src.engine.order_flow import OrderFlowDynamicsEngine
 
 
 class ClusterRiskEngine:
     """
-    Main entry point for Phase 2 cluster and risk analysis.
+    Main entry point for Phase 2 order flow dynamics and risk analysis.
+    Implements Fix 4: Scraps historical funding graphs in favor of real-time VUW & Aggression Ratio.
     """
 
     def __init__(
@@ -28,11 +30,13 @@ class ClusterRiskEngine:
         graph_analyzer: Optional[FundingGraphAnalyzer] = None,
         sybil_detector: Optional[SybilDetector] = None,
         safety_auditor: Optional[TokenSafetyAuditor] = None,
+        order_flow_engine: Optional[OrderFlowDynamicsEngine] = None,
     ):
         self.burner_detector = burner_detector or BurnerWalletDetector()
         self.graph_analyzer = graph_analyzer or FundingGraphAnalyzer()
         self.sybil_detector = sybil_detector or SybilDetector()
         self.safety_auditor = safety_auditor or TokenSafetyAuditor()
+        self.order_flow_engine = order_flow_engine or OrderFlowDynamicsEngine()
 
     def evaluate_candidate(
         self,
@@ -77,17 +81,29 @@ class ClusterRiskEngine:
                 f"from {top_parent} (Cutoff <= {self.graph_analyzer.max_parent_concentration*100.0:.1f}%)"
             )
 
-        # 4. Sybil Swarm Heuristics
+        # 4. Sybil Swarm Heuristics (Legacy)
         sybil_detected, sybil_groups = self.sybil_detector.detect_coordinated_swarms(swaps)
         if sybil_detected:
             rejection_reasons.append(f"Coordinated Sybil swarm detected ({len(sybil_groups)} cluster groups)")
 
-        # 5. Composite Risk Score Calculation [0.0 - 1.0]
+        # 5. Real-Time Order Flow Dynamics (Fix 4: VUW & Aggression Ratio)
+        of_metrics = self.order_flow_engine.evaluate_order_flow(
+            pool_address=pool_address,
+            token_mint=token_mint,
+            swaps=swaps,
+            now=now,
+        )
+        if not of_metrics.is_approved:
+            rejection_reasons.extend(of_metrics.rejection_reasons)
+
+        # 6. Composite Risk Score Calculation [0.0 - 1.0]
         if not safety.is_safe:
             composite_score = 1.0
+        elif not of_metrics.is_approved:
+            composite_score = 0.85
         else:
-            base_score = (burner_ratio * 0.40) + (top_concentration * 0.40)
-            if sybil_detected:
+            base_score = 0.15
+            if burner_ratio > 0.25 or top_concentration > 0.30:
                 base_score += 0.20
             composite_score = min(1.0, max(0.0, round(base_score, 4)))
 
@@ -108,4 +124,8 @@ class ClusterRiskEngine:
             composite_risk_score=composite_score,
             is_approved=is_approved,
             rejection_reasons=rejection_reasons,
+            vuw=of_metrics.vuw,
+            aggression_ratio=of_metrics.aggression_ratio,
+            order_flow_passed=of_metrics.is_approved,
+            order_flow_classification=of_metrics.classification,
         )

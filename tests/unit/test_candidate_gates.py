@@ -31,7 +31,7 @@ def paper_engine(tmp_path):
         state_file=str(state_file),
         sol_price_usd=155.0,
         position_notional_usd=15.0,
-        min_age_minutes=8.0,
+        min_age_minutes=3.0,
         max_age_minutes=25.0,
         circuit_breaker=cb,
         kill_switch=ks,
@@ -39,10 +39,10 @@ def paper_engine(tmp_path):
 
 
 def test_gate_1_pool_age_default_window(paper_engine):
-    pool_young = {"token_mint": "Mint1", "minutes_post_graduation": 5.0, "current_sol_reserve": 35.0}
+    pool_young = {"token_mint": "Mint1", "minutes_post_graduation": 2.0, "current_sol_reserve": 35.0}
     passed, reason = paper_engine.evaluate_candidate_gates(pool_young, quote=None)
     assert not passed
-    assert "Pool Age Gate" in reason
+    assert "Pool Age Gate" in reason or "Minimum Cooldown Gate" in reason
 
     pool_valid = {"token_mint": "Mint2", "minutes_post_graduation": 15.0, "current_sol_reserve": 35.0}
     passed, reason = paper_engine.evaluate_candidate_gates(pool_valid, quote=None)
@@ -193,7 +193,7 @@ def test_gate_4_momentum_positive_trend_and_volume(paper_engine):
     assert not passed
     assert "Stagnant 5m volume" in reason
 
-    # Case C: All 4 gates pass
+    # Case C: All candidate gates pass
     quote_valid = {
         "price_sol": 0.0001,
         "liquidity_usd": 6000.0,
@@ -203,10 +203,99 @@ def test_gate_4_momentum_positive_trend_and_volume(paper_engine):
         "sells_5m": 2,
         "price_change_5m": 3.2,
         "volume_5m_usd": 750.0,
+        "breakout_confirmed": True,
     }
     passed, reason = paper_engine.evaluate_candidate_gates(pool, quote=quote_valid)
     assert passed
-    assert reason == "Passed All 4 Gates"
+    assert "Passed All Candidate Gates" in reason
+
+
+def test_gate_5_volume_exhaustion_consolidation_rejects_unexhausted_dump(paper_engine):
+    pool = {"token_mint": "MintConsol", "minutes_post_graduation": 10.0, "current_sol_reserve": 35.0}
+    # Peak spike vol was $2000. 1m vol is $600 (30% of peak >= 20% exhaustion threshold)
+    quote_unexhausted = {
+        "price_sol": 0.0001,
+        "liquidity_usd": 6000.0,
+        "quote_sol_reserve": 18.0,
+        "total_txns_5m": 6,
+        "buys_5m": 4,
+        "sells_5m": 2,
+        "price_change_5m": 3.2,
+        "volume_5m_usd": 3000.0,
+        "volume_1m_usd": 600.0,
+        "spike_peak_1m_vol": 2000.0,
+        "initial_spike_resistance_price": 0.00009,
+    }
+    passed, reason = paper_engine.evaluate_candidate_gates(pool, quote=quote_unexhausted)
+    assert not passed
+    assert "Volume Consolidation Gate" in reason
+
+
+def test_gate_5_structural_breakout_rejects_below_resistance(paper_engine):
+    pool = {"token_mint": "MintResist", "minutes_post_graduation": 10.0, "current_sol_reserve": 35.0}
+    # 1m vol is $200 (< 20% of $2000 peak -> consolidated), but price 0.000095 < resistance 0.000100
+    quote_below_resistance = {
+        "price_sol": 0.000095,
+        "liquidity_usd": 6000.0,
+        "quote_sol_reserve": 18.0,
+        "total_txns_5m": 6,
+        "buys_5m": 4,
+        "sells_5m": 2,
+        "price_change_5m": 3.2,
+        "volume_5m_usd": 1000.0,
+        "volume_1m_usd": 200.0,
+        "spike_peak_1m_vol": 2000.0,
+        "initial_spike_resistance_price": 0.000100,
+        "consolidation_avg_buy_vol": 50.0,
+    }
+    passed, reason = paper_engine.evaluate_candidate_gates(pool, quote=quote_below_resistance)
+    assert not passed
+    assert "Structural Breakout Gate" in reason
+
+
+def test_gate_5_structural_breakout_rejects_low_buy_volume(paper_engine):
+    pool = {"token_mint": "MintLowBuy", "minutes_post_graduation": 10.0, "current_sol_reserve": 35.0}
+    # Consolidated, price broke above resistance, but buy volume is $60 <= 1.5x avg buy vol ($50 * 1.5 = $75)
+    quote_low_buy_vol = {
+        "price_sol": 0.000105,
+        "liquidity_usd": 6000.0,
+        "quote_sol_reserve": 18.0,
+        "total_txns_5m": 6,
+        "buys_5m": 4,
+        "sells_5m": 2,
+        "price_change_5m": 3.2,
+        "volume_5m_usd": 1000.0,
+        "volume_1m_usd": 200.0,
+        "buy_volume_1m_usd": 60.0,
+        "spike_peak_1m_vol": 2000.0,
+        "initial_spike_resistance_price": 0.000100,
+        "consolidation_avg_buy_vol": 50.0,
+    }
+    passed, reason = paper_engine.evaluate_candidate_gates(pool, quote=quote_low_buy_vol)
+    assert not passed
+    assert "Breakout Buy Volume Gate" in reason
+
+
+def test_gate_5_breakout_confirmed_success(paper_engine):
+    pool = {"token_mint": "MintSuccess", "minutes_post_graduation": 10.0, "current_sol_reserve": 35.0}
+    quote_success = {
+        "price_sol": 0.000105,
+        "liquidity_usd": 6000.0,
+        "quote_sol_reserve": 18.0,
+        "total_txns_5m": 6,
+        "buys_5m": 5,
+        "sells_5m": 1,
+        "price_change_5m": 3.2,
+        "volume_5m_usd": 1000.0,
+        "volume_1m_usd": 200.0,
+        "buy_volume_1m_usd": 120.0,
+        "spike_peak_1m_vol": 2000.0,
+        "initial_spike_resistance_price": 0.000100,
+        "consolidation_avg_buy_vol": 50.0,  # 120 > 1.5 * 50 = 75
+    }
+    passed, reason = paper_engine.evaluate_candidate_gates(pool, quote=quote_success)
+    assert passed
+    assert "Passed All Candidate Gates" in reason
 
 
 def test_enforce_no_repeat_token_trading(tmp_path):

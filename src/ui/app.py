@@ -145,7 +145,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs(
         "1. Active Watchlist (8–25m)",
         "2. BOOST Cliff Decay",
         "3. Falsification Gate",
-        "4. Cluster & Risk (Phase 2)",
+        "4. Order Flow Dynamics (Phase 2)",
         "5. Double Gate & Costs (Phase 3)",
         "6. Paper Trading (Phase 4)",
         "7. Live Control (Phase 5)",
@@ -241,11 +241,11 @@ with tab9:
         <div class="metric-card">
             <div style="font-weight: 700; font-size: 0.95rem; margin-bottom: 0.8rem;">The 7 Invariant System Mitigations</div>
             <ol style="font-size: 0.82rem; color: var(--text); line-height: 1.7; padding-left: 1.2rem;">
-                <li><strong>Sub-Minute Sniping Abandoned:</strong> Secondary momentum on canonical PumpSwap pools 8 to 25 minutes post-graduation.</li>
-                <li><strong>Path A+ (100% Dynamic Trailing Single Exit):</strong> Tranche exits prohibited for positions &lt;$50. Ratchets stop to +8%–+10% net once hurdle is crossed, trails peak executable price by 10%–15%, strictly incurring 2 swaps total.</li>
-                <li><strong>Protocol Buyback Cliff Avoidance:</strong> 8-minute stabilization cooldown completely avoids the 0–5 and 5–8 minute BOOST buyback evaporation.</li>
-                <li><strong>Pre-Flight Double Gate:</strong> Expected friction cap (7.0% Regime A, 6.0% Regime B) and gross profit hurdles (+16% to +22% / +12% to +16%).</li>
-                <li><strong>Cluster Risk & Fresh Burner Exclusion (Phase 2):</strong> Exclude buyers with &lt;3 lifetime transactions; 2-hop funding graph &gt;30% cutoff.</li>
+                <li><strong>Sub-Minute Sniping Abandoned:</strong> Secondary momentum on canonical PumpSwap pools 3 to 25 minutes post-graduation.</li>
+                <li><strong>Invariant 2 (Local-Structure & Time-Decay Exits + Friction-Busting Scale-Out):</strong> Continuous percentage trails are discarded on micro-liquidity. Discrete structural exits are enforced: (1) <em>Structure-Based Trailing Stop:</em> Stop Loss = Lowest Low of the previous two completed 1-minute candles (absorbs 30–40% single-block wicks without stopping out while macro 1m higher lows hold). (2) <em>Momentum Time-Decay Exit:</em> If 2 consecutive 1-minute candles pass without making a new local high and volume drops &gt;40% from entry-breakout volume, exit 100% immediately. (3) <em>Liquidity Collapse Exit:</em> Every 30 seconds, simulate sell quote; if estimated slippage exceeds 5.0%, market dump immediately. Combined with <em>Friction-Busting Scale-Out:</em> TP1 sells 80% at +8%–+10% gross to pay friction; remaining 20% free runner rides structure stop with zero cost-of-capital drag.</li>
+                <li><strong>Invariant 3 (Volume Exhaustion Consolidation + Structural Breakout Required):</strong> Replaces static time cooldown. Requires a minimum 3-minute cooldown (bypassing 0–3m protocol cliff), 1-minute volume dropping to &lt;20% of initial spike peak (confirming sniper dump exhaustion), and candle closing above spike resistance with buy volume &gt;1.5x consolidation average.</li>
+                <li><strong>Invariant 4 & 6 (Dynamic Liquidity-Based Sizing — Fix 5: Solves Candidate Starvation):</strong> Abandons hard-rejecting candidates with >2% impact for a static $20 swap (which starves the bot and risks failing Phase 1). Position size is a dependent variable of pool liquidity: (1) <em>Maximum Safe Swap:</em> Calculates exact swap size in SOL yielding &le; 1.5% price impact (<code>swap_sol = 0.030 * sol_reserve</code>). (2) <em>Dynamic Sizing Rule:</em> <code>Position Size = min(Calculated Max Swap, $25 Active Wallet Limit)</code>. (3) <em>Hard Floor Rejection:</em> If <code>Calculated Max Swap &lt; $3.00</code> (absolute minimum to overcome fixed Solana transaction fees), hard-reject the pool. Pools with thinner reserves (which cannot handle $20) auto-resize (e.g. to $6.00) and enter safely, expanding candidate supply.</li>
+                <li><strong>Invariant 5 (Real-Time Order Flow Dynamics Defeats Sybil Heuristics — Fix 4):</strong> Scraps 2-hop funding graphs and &lt;3 tx heuristics (trivially defeated by aged wallets & mixers). Enforces real-time AMM order flow dynamics: (1) <em>Velocity of Unique Wallets (VUW):</em> <code>(Unique Buyers Current 1m) / (Unique Buyers Prior 1m)</code> must be &ge; 1.20 (hard rejects flat wash-trader wallet rotation ~1.0; demands retail FOMO acceleration &gt;1.5). (2) <em>Aggression Ratio:</em> <code>Taker Buy SOL / Taker Sell SOL</code> must be &gt; 2.00 (validates heavily buy-led market orders into the AMM curve vs balanced wash trades).</li>
                 <li><strong>Tip Caps & Bundle Transaction Structuring:</strong> 1.5% notional tip cap; Jito tip instruction placed strictly after swap instruction; 0.005 SOL emergency exit budget.</li>
                 <li><strong>Pre-Trade Risk Capacity & Hard Checks:</strong> Verify Stressed Loss + Exit Reserve fits into $10 daily loss ceiling; 20-minute fallback holding timeout.</li>
             </ol>

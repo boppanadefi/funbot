@@ -55,3 +55,58 @@ def test_falsification_gate_pass_scenario():
     assert report["candidates_per_day"] == 4.0
     assert report["depth_pass_rate_pct"] == 100.0
     assert report["friction_pass_rate_pct"] == 100.0
+
+
+def test_falsification_gate_dynamic_sizing_expansion():
+    """
+    Fix 5: Candidates with >2% impact for a static $20 swap are saved by dynamic sizing
+    if pool liquidity supports a safe swap >= $3.00.
+    """
+    mock_data = {
+        "observation_days": 14,
+        "pools": [
+            {
+                "quote_asset": "SOL",
+                "is_canonical": True,
+                "minutes_post_graduation": 10.0,
+                "price_impact_20usd_pct": 3.8,  # > 2.0% (would fail static $20 check)
+                "sol_reserve": 30.0,            # 30 SOL reserve -> max safe swap = 0.03*30*155 = $139.50 (>= $3.00)
+                "modeled_friction_pct": 5.2,
+            }
+            for _ in range(50)
+        ],
+    }
+
+    gate = Phase1FalsificationGate(mock_data)
+    decision, report = gate.run_evaluations()
+
+    assert decision == "PASS"
+    assert report["depth_pass_rate_pct"] == 100.0
+    assert report.get("dynamic_sizing_applied") is True
+
+
+def test_falsification_gate_kill_on_insufficient_depth_even_dynamic():
+    """
+    Candidates with reserves too shallow to even support $3.00 minimum swap are rejected.
+    """
+    mock_data = {
+        "observation_days": 14,
+        "pools": [
+            {
+                "quote_asset": "SOL",
+                "is_canonical": True,
+                "minutes_post_graduation": 10.0,
+                "price_impact_20usd_pct": 15.0, # > 2.0%
+                "sol_reserve": 0.2,             # 0.2 SOL reserve -> max safe swap = $0.93 < $3.00 minimum
+                "modeled_friction_pct": 5.2,
+            }
+            for _ in range(50)
+        ],
+    }
+
+    gate = Phase1FalsificationGate(mock_data)
+    decision, report = gate.run_evaluations()
+
+    assert decision == "KILL"
+    assert "Executable depth inadequate" in report["kill_reason"]
+    assert report["depth_pass_rate_pct"] == 0.0
