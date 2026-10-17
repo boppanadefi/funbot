@@ -14,8 +14,8 @@
   "ratchet_floor_price_sol": 0.0003933300645161291,
   "ratchet_activated": false,
   "state": "OPEN",
-  "elapsed_minutes": 2.0,
+  "elapsed_minutes": 2.5,
   "unrealized_return_pct": 0.0,
   "unrealized_pnl_usd": 0.0,
-  "updated_at": "2026-10-17T05:51:18.428875+00:00"
+  "updated_at": "2026-10-17T05:51:45.448741+00:00"
 }
