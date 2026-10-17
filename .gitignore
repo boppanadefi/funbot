@@ -19,5 +19,9 @@ data/telemetry/*.db-journal
 data/telemetry/parquet/
 *.log
 
+# Live Runtime State (frequently mutated by daemons)
+data/live/active_paper_position.json
+data/live/*.tmp
+
 # Streamlit
 .streamlit/
