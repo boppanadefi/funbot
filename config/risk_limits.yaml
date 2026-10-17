@@ -21,12 +21,14 @@ exit_strategy:
   mode: "FRICTION_BUSTING_SCALE_OUT"
   scale_out_mandatory_under_usd: 50.0  # Path A+ prohibited for positions < $50
   prohibit_tranche_exits: false        # Friction-Busting Scale-Out replaces pure single exit
-  total_swaps: 3                       # 1 entry leg + up to 2 exit legs (TP1 80% + Runner 20%)
-  tp1_size_pct: 0.80                   # TP1: Sell 80% of position
+  total_swaps: 3                       # 1 entry leg + up to 2 exit legs (TP1 90% + Runner 10%)
+  tp1_size_pct: 0.90                   # TP1: Sell 90% of position to lock net profit after friction
   tp1_target_gross_pct: 0.09           # Modest, achievable +9.0% gross target (range +8% to +10%)
   tp1_target_gross_pct_min: 0.08       # Minimum acceptable TP1 gross target (+8%)
   tp1_target_gross_pct_max: 0.10       # Maximum acceptable TP1 gross target (+10%)
-  runner_size_pct: 0.20                # Free runner: Retain 20% with zero cost-of-capital drag
+  runner_size_pct: 0.10                # Lottery runner: Retain 10% purely for moonshot optionality
+  runner_hard_kill_timeout_minutes: 3.0 # Hard Time Kill: Dump runner if not >= +30% within 3 minutes of TP1
+  runner_target_gross_pct: 0.30        # +30% gross target hurdle for runner
   runner_trailing_pct: 0.15            # Wide 15% trailing stop below peak price for runner
   protective_stop_loss_pct: 0.10       # Protective stop at -10% before TP1
   # Fix 3: Local-Structure & Time-Decay Exits

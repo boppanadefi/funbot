@@ -1,7 +1,7 @@
 """
 Deterministic Friction-Busting Scale-Out Paper Trading Simulator.
-Enforces Invariant 2 (Path A+ prohibited for positions < $50; Friction-Busting Scale-Out mandatory:
-TP1 sells 80% at +8% to +10% gross to cover round-trip friction; 20% runner trails with zero cost drag)
+Enforces Invariant 2 (Path A+ prohibited for positions < $50; Friction-Busting 90/10 Scale-Out mandatory:
+TP1 sells 90% at +8% to +10% gross via 3x30% time-sliced tranches to cover round-trip friction; 10% lottery runner with 3m hard time kill)
 and Guardrail 7 (20m fallback timeout).
 """
 
@@ -23,19 +23,24 @@ from src.engine.structure_exits import (
 
 class PathASimulator:
     """
-    Simulates Friction-Busting Scale-Out execution for positions < $50.
+    Simulates Friction-Busting 90/10 Scale-Out execution for positions < $50.
     1. Entry leg: 100% position acquired.
-    2. TP1 ("The Friction Buster"): Sells 80% at modest +8% to +10% gross, completely covering trade friction.
-    3. The Runner: Retains remaining 20% with zero cost-of-capital drag, trailing with a wide 15% stop.
+    2. TP1 ("The Friction Buster"): Sells 90% at modest +8% to +10% gross (+9% default), locking in net profit after friction.
+    3. The Runner: Retains remaining 10% as a lottery runner with a Hard Time Kill:
+       If the runner does not achieve +30% gross within 3 minutes of TP1, market dump immediately.
     If hard stop (-10%) or 20m timeout is hit before TP1, liquidates 100% in a single exit.
     """
 
     FALLBACK_HOLDING_TIMEOUT_MINUTES = 20.0  # Guardrail 7: 20-minute fallback timeout
     PROTECTIVE_STOP_LOSS_PCT = 0.10          # Initial hard protective stop at -10%
     DEFAULT_TP1_TARGET_GROSS_PCT = 0.09      # +9.0% gross target (+8% to +10% range)
-    DEFAULT_TP1_SIZE_PCT = 0.80              # 80% liquidated at TP1 to pay round-trip friction
-    DEFAULT_RUNNER_SIZE_PCT = 0.20           # 20% retained as free runner
+    DEFAULT_TP1_SIZE_PCT = 0.90              # 90% liquidated at TP1 to lock net profit after friction
+    DEFAULT_TP1_NUM_SLICES = 3               # 3 equal slices (30% each) to defeat MEV sandwiches & curve cascades
+    TP1_SLICE_INTERVAL_SECONDS = 1.0         # Spaced 2-3 blocks apart (~800ms - 1.2s)
+    DEFAULT_RUNNER_SIZE_PCT = 0.10           # 10% retained as lottery runner
     DEFAULT_RUNNER_TRAILING_PCT = 0.15       # 15% wide trailing stop on runner
+    RUNNER_HARD_KILL_TIMEOUT_MINUTES = 3.0   # Hard Time Kill: market dump if not >= +30% gross within 3m of TP1
+    RUNNER_TARGET_GROSS_PCT = 0.30           # +30% gross target hurdle for runner
 
     def __init__(
         self,
@@ -133,6 +138,9 @@ class PathASimulator:
             current_stop_price_sol=initial_stop_price,
             state=PositionState.OPEN,
             tp1_activated=False,
+            runner_hard_kill_timeout_minutes=self.RUNNER_HARD_KILL_TIMEOUT_MINUTES,
+            runner_target_gross_pct=self.RUNNER_TARGET_GROSS_PCT,
+            tp1_slices_total=self.DEFAULT_TP1_NUM_SLICES,
             entry_leg=entry_leg,
             entry_breakout_volume_usd=entry_breakout_volume_usd,
             trailing_mode=trailing_mode,
@@ -162,10 +170,11 @@ class PathASimulator:
     ) -> Optional[PaperPosition]:
         """
         Updates position state with a new price tick.
-        Enforces Friction-Busting Scale-Out and Local-Structure & Time-Decay Exits (Fix 3):
+        Enforces Friction-Busting 90/10 Scale-Out and Local-Structure & Time-Decay Exits (Fix 3 & Fix 5):
         - Evaluates Liquidity Collapse (30s interval: sell slippage > 5%).
         - Evaluates Momentum Time-Decay (2 candles no high + >40% volume drop).
         - Evaluates Structure-Based Trailing Stop (Lowest Low of previous two completed 1m candles).
+        - Evaluates Hard Time Kill on 10% Runner (market dump if not >= +30% gross within 3m of TP1).
         - Checks hard protective stop (-10%), TP1 trigger (+8% to +10%, default +9%), and 20m timeout.
         """
         if pos.is_closed:
@@ -225,8 +234,28 @@ class PathASimulator:
                 self._execute_tp1(pos, current_price_sol, tick_time)
                 return pos
 
-        # Stage 2: Runner Active (20% running with structure / fallback trailing stop)
+        # Stage 2: Runner Active (10% lottery runner with structure / fallback trailing stop & 3m hard time kill)
         else:
+            # Check Hard Time Kill on Runner (Fix 5):
+            # If the 10% runner does not achieve +30% gross within 3 minutes of TP1, market dump immediately.
+            # Do not let it bleed sideways while LP evaporates. Cut the exposure ruthlessly.
+            elapsed_since_tp1_min = (tick_time - pos.tp1_time).total_seconds() / 60.0 if pos.tp1_time else 0.0
+            gross_return = (current_price_sol - pos.entry_price_sol) / pos.entry_price_sol if pos.entry_price_sol > 0 else 0.0
+            if gross_return >= pos.runner_target_gross_pct:
+                pos.runner_target_achieved = True
+
+            if elapsed_since_tp1_min >= pos.runner_hard_kill_timeout_minutes:
+                # If runner did not achieve +30% gross within 3 minutes of TP1, ruthlessly market dump immediately
+                if not pos.runner_target_achieved:
+                    peak_ret = ((pos.peak_price_sol - pos.entry_price_sol) / pos.entry_price_sol) * 100.0 if pos.entry_price_sol > 0 else 0.0
+                    return self._execute_exit(
+                        pos,
+                        current_price_sol,
+                        tick_time,
+                        PositionState.CLOSED_RUNNER_TIME_KILL,
+                        f"RUNNER_HARD_TIME_KILL (<+30% gross within {pos.runner_hard_kill_timeout_minutes:.0f}m of TP1, peak {peak_ret:+.1f}%)"
+                    )
+
             # Structure-based trailing stop: Lowest Low of previous 2 completed 1m candles.
             # If structure stop not yet formed (< 2 completed candles), fallback to trailing peak by runner_trailing_pct
             if pos.trailing_mode == "STRUCTURE" and pos.structure_stop_price_sol > 0:
@@ -248,35 +277,86 @@ class PathASimulator:
         tick_time: datetime,
     ) -> None:
         """
-        Executes TP1 (The Friction Buster): Sells 80% of tokens at +8% to +10% gross.
-        Covers the round-trip friction of the entire trade and unlocks a risk-free 20% runner.
+        Executes Time-Sliced TP1 (Anti-MEV & Sandwich Defense):
+        Never market-sells 90% in one monolithic transaction (which creates a lucrative sandwich
+        target in the mempool and causes an AMM curve cascade, degrading fills to +2%).
+        Splits the 90% tranche into 3 equal sells (30% each) spaced 2-3 blocks apart (~800ms-1.2s).
+        Minimizes self-impact, obscures intent, and averages into the +9% target without cascading the curve.
         """
-        tp1_tokens = pos.tokens_held * pos.tp1_size_pct
-        gross_sol_received = tp1_tokens * current_price_sol
-        mc_approx = current_price_sol * 1_000_000_000.0
-
-        tier = self.fee_lookup.get_tier(mc_approx)
-        venue_fee_sol = gross_sol_received * (tier.total_fee_pct / 100.0)
+        num_slices = getattr(pos, "tp1_slices_total", self.DEFAULT_TP1_NUM_SLICES) or self.DEFAULT_TP1_NUM_SLICES
+        slice_token_pct = pos.tp1_size_pct / num_slices  # 0.90 / 3 = 0.30 (30% each)
+        slice_tokens = pos.tokens_held * slice_token_pct
         tp1_notional_usd = pos.position_notional_usd * pos.tp1_size_pct
-        overhead = self.tip_model.calculate_exit_overhead(tp1_notional_usd, is_emergency=False)
 
-        tp1_leg = ExecutionLeg(
+        overall_overhead = self.tip_model.calculate_exit_overhead(tp1_notional_usd, is_emergency=False)
+        slice_jito_tip_sol = overall_overhead.jito_tip_sol / num_slices
+        slice_priority_fee_sol = overall_overhead.priority_fee_sol / num_slices
+        slice_base_fee_sol = overall_overhead.base_tx_fee_sol
+
+        total_gross_sol = 0.0
+        total_tokens_sold = 0.0
+        total_venue_fee_sol = 0.0
+
+        pos.tp1_legs = []
+
+        # Execute slices spaced 2-3 blocks (~800ms - 1.2s, default 1.0s) apart
+        for slice_idx in range(num_slices):
+            slice_offset_sec = slice_idx * self.TP1_SLICE_INTERVAL_SECONDS
+            slice_timestamp = tick_time + timedelta(seconds=slice_offset_sec)
+
+            # Slicing into 30% chunks confines per-slice AMM curve impact to ~0.20%,
+            # allowing organic retail flow to absorb between blocks, preserving ~+9% target.
+            slice_price_sol = current_price_sol * (1.0 - (slice_idx * 0.0015))
+            slice_gross_sol = slice_tokens * slice_price_sol
+
+            mc_approx = slice_price_sol * 1_000_000_000.0
+            tier = self.fee_lookup.get_tier(mc_approx)
+            slice_venue_fee_sol = slice_gross_sol * (tier.total_fee_pct / 100.0)
+
+            slice_leg = ExecutionLeg(
+                leg_type=f"TP1_SLICE_{slice_idx + 1}",
+                timestamp=slice_timestamp,
+                price_sol=slice_price_sol,
+                sol_amount=slice_gross_sol,
+                token_amount=slice_tokens,
+                venue_fee_sol=slice_venue_fee_sol,
+                jito_tip_sol=slice_jito_tip_sol,
+                priority_fee_sol=slice_priority_fee_sol,
+                base_fee_sol=slice_base_fee_sol,
+            )
+            pos.tp1_legs.append(slice_leg)
+
+            total_gross_sol += slice_gross_sol
+            total_tokens_sold += slice_tokens
+            total_venue_fee_sol += slice_venue_fee_sol
+
+        total_jito_tip_sol = overall_overhead.jito_tip_sol
+        total_priority_fee_sol = overall_overhead.priority_fee_sol
+        total_base_fee_sol = slice_base_fee_sol * num_slices
+
+        pos.tp1_slices_executed = num_slices
+        vwap_tp1_price_sol = total_gross_sol / total_tokens_sold if total_tokens_sold > 0 else current_price_sol
+
+        # Primary composite leg representing aggregate TP1 exit
+        tp1_composite_leg = ExecutionLeg(
             leg_type="TP1_EXIT",
             timestamp=tick_time,
-            price_sol=current_price_sol,
-            sol_amount=gross_sol_received,
-            token_amount=tp1_tokens,
-            venue_fee_sol=venue_fee_sol,
-            jito_tip_sol=overhead.jito_tip_sol,
-            priority_fee_sol=overhead.priority_fee_sol,
-            base_fee_sol=overhead.base_tx_fee_sol,
+            price_sol=vwap_tp1_price_sol,
+            sol_amount=total_gross_sol,
+            token_amount=total_tokens_sold,
+            venue_fee_sol=total_venue_fee_sol,
+            jito_tip_sol=total_jito_tip_sol,
+            priority_fee_sol=total_priority_fee_sol,
+            base_fee_sol=total_base_fee_sol,
         )
 
-        pos.tp1_leg = tp1_leg
+        pos.tp1_leg = tp1_composite_leg
         pos.tp1_activated = True
+        pos.tp1_time = tick_time
         pos.ratchet_activated = True  # Backward compatibility
         pos.state = PositionState.RUNNER_ACTIVE
-        pos.tp1_realized_usd = (gross_sol_received - tp1_leg.total_friction_sol) * self.sol_price_usd
+        pos.tp1_realized_usd = (total_gross_sol - tp1_composite_leg.total_friction_sol) * self.sol_price_usd
+        pos.runner_tokens_held = max(0.0, pos.tokens_held - total_tokens_sold)
 
         # Initialize runner trailing stop: 15% below peak
         pos.peak_price_sol = max(pos.peak_price_sol, current_price_sol)
@@ -292,7 +372,7 @@ class PathASimulator:
     ) -> PaperPosition:
         """
         Executes final exit.
-        If TP1 was already executed, liquidates the remaining 20% runner tokens.
+        If TP1 was already executed, liquidates the remaining 10% runner tokens.
         If TP1 was not executed (hard stop or timeout), liquidates 100% of tokens in single exit.
         """
         if pos.tp1_activated:

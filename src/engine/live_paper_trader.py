@@ -45,13 +45,17 @@ class LivePaperTradingEngine:
         kill_switch: Optional[EmergencyKillSwitch] = None,
         market_structure_tracker: Optional[MarketStructureTracker] = None,
         order_flow_engine: Optional[OrderFlowDynamicsEngine] = None,
+        min_baseline_demand_usd: float = 100.0,
     ):
         self.ledger = PaperLedger(db_path=db_path)
         self.sim = PathASimulator(ledger=self.ledger, sol_price_usd=sol_price_usd)
         self.circuit_breaker = circuit_breaker or DailyCircuitBreaker()
         self.kill_switch = kill_switch or EmergencyKillSwitch()
         self.double_gate = PreFlightDoubleGate()
-        self.market_structure = market_structure_tracker or MarketStructureTracker(min_cooldown_minutes=min_age_minutes)
+        self.market_structure = market_structure_tracker or MarketStructureTracker(
+            min_cooldown_minutes=min_age_minutes,
+            min_baseline_demand_usd=min_baseline_demand_usd,
+        )
         self.order_flow = order_flow_engine or OrderFlowDynamicsEngine()
         self.live_feed = LiveMarketFeed(
             sol_price_usd=sol_price_usd,
@@ -112,6 +116,8 @@ class LivePaperTradingEngine:
                 self._current_pos.current_stop_price_sol = data.get("current_stop_price_sol", self._current_pos.current_stop_price_sol)
                 self._current_pos.tp1_activated = data.get("tp1_activated", False)
                 self._current_pos.ratchet_activated = self._current_pos.tp1_activated
+                if data.get("tp1_time"):
+                    self._current_pos.tp1_time = datetime.fromisoformat(data["tp1_time"])
                 if self._current_pos.tp1_activated:
                     self._current_pos.state = PositionState.RUNNER_ACTIVE
         except Exception as e:
@@ -156,10 +162,13 @@ class LivePaperTradingEngine:
                 "tp1_target_gross_pct": self._current_pos.tp1_target_gross_pct,
                 "tp1_price_sol": self._current_pos.tp1_price_sol,
                 "tp1_activated": self._current_pos.tp1_activated,
+                "tp1_time": self._current_pos.tp1_time.isoformat() if self._current_pos.tp1_time else None,
                 "tp1_size_pct": self._current_pos.tp1_size_pct,
                 "runner_size_pct": self._current_pos.runner_size_pct,
                 "runner_tokens_held": self._current_pos.runner_tokens_held,
                 "runner_trailing_pct": self._current_pos.runner_trailing_pct,
+                "runner_hard_kill_timeout_minutes": self._current_pos.runner_hard_kill_timeout_minutes,
+                "runner_target_gross_pct": self._current_pos.runner_target_gross_pct,
                 "ratchet_trigger_price_sol": self._current_pos.tp1_price_sol,
                 "ratchet_floor_price_sol": self._current_pos.ratchet_floor_price_sol,
                 "ratchet_activated": self._current_pos.tp1_activated,
@@ -274,15 +283,23 @@ class LivePaperTradingEngine:
         if not ms_passed:
             return False, ms_reason
 
-        # 6. Gate 6 (Invariant 5 / Fix 4): Real-Time Order Flow Dynamics Gate
-        # Replaces historical genealogy with real-time AMM order flow dynamics (VUW >= 1.2, Aggression > 2.0)
+        # 6. Gate 6 (Invariant 5 / Fix 4): Slot-Level Order Flow Dynamics Gate
+        # Replaces lagging 1m windows with real-time slot-level order flow:
+        # Delta Unique Buyers >= 1 over last 5 blocks (400ms slots) & Breakout Candle Taker Buy > 70%
         of_metrics = self.order_flow.evaluate_order_flow(
             pool_address=pool.get("pool_address", ""),
             token_mint=pool.get("token_mint", ""),
             quote=quote,
             now=now,
         )
-        if quote and ("vuw" in quote or "unique_buyers_current_1m" in quote or "aggression_ratio" in quote or "taker_buy_sol" in quote):
+        if quote and (
+            "vuw" in quote
+            or "unique_buyers_current_1m" in quote
+            or "aggression_ratio" in quote
+            or "taker_buy_sol" in quote
+            or "delta_unique_buyers_5blocks" in quote
+            or "breakout_taker_buy_pct" in quote
+        ):
             if not of_metrics.is_approved:
                 return False, f"Order Flow Dynamics Gate: {'; '.join(of_metrics.rejection_reasons)}"
 

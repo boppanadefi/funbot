@@ -126,6 +126,8 @@ class ClusterRiskEngine:
             rejection_reasons=rejection_reasons,
             vuw=of_metrics.vuw,
             aggression_ratio=of_metrics.aggression_ratio,
+            delta_unique_buyers_5blocks=of_metrics.delta_unique_buyers_5blocks,
+            breakout_taker_buy_pct=of_metrics.breakout_taker_buy_pct,
             order_flow_passed=of_metrics.is_approved,
             order_flow_classification=of_metrics.classification,
         )

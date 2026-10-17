@@ -48,12 +48,12 @@ def test_friction_busting_scale_out_execution(temp_ledger):
     assert pos.tp1_activated is False
 
     # 3. Tick 2: Price hits 0.00110 (+10% gross, crosses +9% TP1 target!).
-    # TP1 (The Friction Buster) executes: 80% of tokens liquidated!
+    # TP1 (The Friction Buster) executes: 90% of tokens liquidated!
     pos = sim.update_price_tick(pos, 0.00110, start_time + timedelta(minutes=4))
     assert pos.state == PositionState.RUNNER_ACTIVE
     assert pos.tp1_activated is True
     assert pos.tp1_leg is not None
-    assert pos.tp1_leg.token_amount == pytest.approx(pos.tokens_held * 0.80)
+    assert pos.tp1_leg.token_amount == pytest.approx(pos.tokens_held * 0.90)
     # Runner trailing stop is active: 15% below peak (0.00110 * 0.85 = 0.000935)
     assert pos.current_stop_price_sol == pytest.approx(0.00110 * 0.85)
 
@@ -63,12 +63,12 @@ def test_friction_busting_scale_out_execution(temp_ledger):
     assert pos.current_stop_price_sol == pytest.approx(0.00150 * 0.85)
 
     # 5. Tick 4: Price pulls back to 0.00125 (hits runner trailing stop 0.001275).
-    # Runner exit triggered! Liquidates remaining 20% tokens.
+    # Runner exit triggered! Liquidates remaining 10% tokens.
     closed_pos = sim.update_price_tick(pos, 0.00125, start_time + timedelta(minutes=8))
     assert closed_pos.state == PositionState.CLOSED_TRAIL
     assert closed_pos.exit_reason == "TRAILING_STOP"
     assert closed_pos.runner_leg is not None
-    assert closed_pos.runner_leg.token_amount == pytest.approx(closed_pos.tokens_held * 0.20)
+    assert closed_pos.runner_leg.token_amount == pytest.approx(closed_pos.tokens_held * 0.10)
     assert closed_pos.realized_net_pnl_usd > 0  # Solid net profit!
 
     # Check persistent ledger
@@ -80,10 +80,10 @@ def test_friction_busting_scale_out_execution(temp_ledger):
 
 def test_friction_busting_runner_dumps_to_zero(temp_ledger):
     """
-    Verifies the crucial mathematical advantage:
-    On a $20 trade, TP1 locks in +$1.44 (covering friction).
-    If the remaining $4 runner dumps completely, net loss is only -$2.56
-    instead of the -$3.50 loss incurred under the old 100% stop model.
+    Verifies the crucial mathematical advantage of 90/10 Scale-Out:
+    On a $20 trade, 90% ($18) sold at +9% gross locks in +$1.62.
+    If the remaining $2 runner (10%) dumps completely to 0, gross loss is only -$0.38
+    (vastly superior to the -$2.56 loss under 80/20 and -$3.50 loss under old 100% stop).
     """
     sim = PathASimulator(ledger=temp_ledger, sol_price_usd=155.0)
     start_time = datetime.now(timezone.utc)
@@ -100,7 +100,7 @@ def test_friction_busting_runner_dumps_to_zero(temp_ledger):
         entry_time=start_time,
     )
 
-    # 1. Price hits +9% TP1 -> 80% sold to cover friction
+    # 1. Price hits +9% TP1 -> 90% sold to lock net profit after friction
     pos = sim.update_price_tick(pos, 0.00109, start_time + timedelta(minutes=2))
     assert pos.tp1_activated is True
     assert pos.state == PositionState.RUNNER_ACTIVE
@@ -109,13 +109,93 @@ def test_friction_busting_runner_dumps_to_zero(temp_ledger):
     closed = sim.update_price_tick(pos, 0.000001, start_time + timedelta(minutes=4))
     assert closed.state == PositionState.CLOSED_TRAIL
 
-    # Net loss on trade is limited to ~$2.56 gross (vastly superior to the -$20 loss if held to 0)
+    # Net loss on trade is limited to ~$0.38 gross
     gross_sol_received = pos.tp1_leg.sol_amount + pos.runner_leg.sol_amount
     gross_pnl_usd = (gross_sol_received - pos.sol_spent) * sim.sol_price_usd
-    assert pytest.approx(gross_pnl_usd, abs=0.15) == -2.56
+    assert pytest.approx(gross_pnl_usd, abs=0.15) == -0.38
 
-    # Realized net loss with all 3 legs of fees/tips is strictly bounded and superior to older full-loss stops
-    assert -3.60 <= closed.realized_net_pnl_usd <= -2.00
+    # Realized net loss with all 3 slices + entry + runner exit is strictly bounded
+    assert -3.20 <= closed.realized_net_pnl_usd <= -1.20
+
+
+def test_runner_hard_time_kill_when_under_30_pct(temp_ledger):
+    """
+    Fix 5: If the 10% runner does not achieve +30% gross within 3 minutes of TP1,
+    market dump it immediately without letting it bleed sideways while LP evaporates.
+    """
+    sim = PathASimulator(ledger=temp_ledger, sol_price_usd=155.0)
+    start_time = datetime(2026, 10, 17, 12, 0, 0, tzinfo=timezone.utc)
+
+    pos = sim.open_position(
+        position_id="pos_runner_time_kill",
+        pool_address="PoolTimeKill01",
+        token_mint="MintTimeKill01",
+        regime="REGIME_A",
+        market_cap_sol=390.0,
+        entry_price_sol=0.00100,
+        tp1_target_gross_pct=0.09,
+        position_notional_usd=20.0,
+        entry_time=start_time,
+    )
+
+    # Minute 1: Price triggers TP1 at 0.00110 (+10% gross). TP1 activates!
+    pos = sim.update_price_tick(pos, 0.00110, start_time + timedelta(minutes=1))
+    assert pos.tp1_activated is True
+    assert pos.state == PositionState.RUNNER_ACTIVE
+    assert pos.tp1_time == start_time + timedelta(minutes=1)
+
+    # Minute 2 (1m after TP1): Price moves to 0.00115 (+15% gross, < +30%). Still active.
+    pos = sim.update_price_tick(pos, 0.00115, start_time + timedelta(minutes=2))
+    assert not pos.is_closed
+
+    # Minute 3 (2m after TP1): Price moves to 0.00120 (+20% gross, < +30%). Still active.
+    pos = sim.update_price_tick(pos, 0.00120, start_time + timedelta(minutes=3))
+    assert not pos.is_closed
+
+    # Minute 4.1 (3.1m after TP1): 3 minutes have passed since TP1!
+    # Price is 0.00118 (+18% gross < +30% threshold).
+    # Hard Time Kill triggers immediately!
+    closed = sim.update_price_tick(pos, 0.00118, start_time + timedelta(minutes=4, seconds=6))
+    assert closed.is_closed is True
+    assert closed.state == PositionState.CLOSED_RUNNER_TIME_KILL
+    assert "RUNNER_HARD_TIME_KILL" in closed.exit_reason
+    assert closed.runner_leg is not None
+    assert closed.runner_leg.token_amount == pytest.approx(pos.tokens_held * 0.10)
+
+
+def test_runner_exceeding_30_pct_survives_time_kill(temp_ledger):
+    """
+    Fix 5: If the runner successfully breaks out >= +30% within 3 minutes of TP1,
+    it is NOT killed by the time-kill rule; it is allowed to run and trail structure stops.
+    """
+    sim = PathASimulator(ledger=temp_ledger, sol_price_usd=155.0)
+    start_time = datetime(2026, 10, 17, 13, 0, 0, tzinfo=timezone.utc)
+
+    pos = sim.open_position(
+        position_id="pos_runner_moonshot",
+        pool_address="PoolMoon01",
+        token_mint="MintMoon01",
+        regime="REGIME_A",
+        market_cap_sol=390.0,
+        entry_price_sol=0.00100,
+        tp1_target_gross_pct=0.09,
+        position_notional_usd=20.0,
+        entry_time=start_time,
+    )
+
+    # Minute 1: Price triggers TP1 at 0.00110. TP1 activates!
+    pos = sim.update_price_tick(pos, 0.00110, start_time + timedelta(minutes=1))
+    assert pos.tp1_activated is True
+
+    # Minute 2.5: Runner surges to 0.00140 (+40% gross >= +30% hurdle!).
+    pos = sim.update_price_tick(pos, 0.00140, start_time + timedelta(minutes=2, seconds=30))
+    assert not pos.is_closed
+
+    # Minute 4.5 (3.5m after TP1): Price remains strong at 0.00138 (+38% >= +30%).
+    # Hard Time Kill does NOT trigger because price achieved and held >= +30%!
+    pos = sim.update_price_tick(pos, 0.00138, start_time + timedelta(minutes=4, seconds=30))
+    assert not pos.is_closed
+    assert pos.state == PositionState.RUNNER_ACTIVE
 
 
 
@@ -262,4 +342,61 @@ def test_live_paper_trading_engine(tmp_path):
     assert closed is not None
     assert closed["status"] == "MANUAL_CLOSED"
     assert engine.get_active_position() is None
+
+
+def test_time_sliced_tp1_execution(temp_ledger):
+    """
+    Verifies Time-Sliced TP1 (Anti-MEV / Sandwich Defense):
+    1. Splits 90% TP1 tranche into exactly 3 equal sells (30% each).
+    2. Spaces slices 2-3 blocks (~800ms-1.2s) apart.
+    3. Confines curve impact per slice and preserves average fill near +9% target.
+    4. Unlocks 10% lottery runner after slice 3.
+    """
+    sim = PathASimulator(ledger=temp_ledger, sol_price_usd=155.0)
+    start_time = datetime.now(timezone.utc)
+
+    pos = sim.open_position(
+        position_id="pos_sliced_test",
+        pool_address="PoolSlicedTP1",
+        token_mint="TokenSlicedTP1",
+        regime="REGIME_A",
+        market_cap_sol=380.0,
+        entry_price_sol=0.00100,
+        position_notional_usd=20.0,
+        entry_time=start_time,
+        tp1_target_gross_pct=0.09,
+    )
+
+    assert pos.tp1_activated is False
+    assert pos.tp1_slices_executed == 0
+    assert len(pos.tp1_legs) == 0
+
+    # Trigger TP1 at +10% gross (0.00110)
+    pos = sim.update_price_tick(pos, 0.00110, start_time + timedelta(minutes=3))
+
+    assert pos.state == PositionState.RUNNER_ACTIVE
+    assert pos.tp1_activated is True
+    assert pos.tp1_slices_executed == 3
+    assert len(pos.tp1_legs) == 3
+
+    # Verify each slice sells exactly 30% of tokens
+    expected_slice_tokens = pos.tokens_held * 0.30
+    total_slice_tokens = 0.0
+    for idx, slice_leg in enumerate(pos.tp1_legs):
+        assert slice_leg.leg_type == f"TP1_SLICE_{idx + 1}"
+        assert slice_leg.token_amount == pytest.approx(expected_slice_tokens)
+        total_slice_tokens += slice_leg.token_amount
+        if idx > 0:
+            delta_sec = (slice_leg.timestamp - pos.tp1_legs[idx - 1].timestamp).total_seconds()
+            assert delta_sec == pytest.approx(1.0)  # 2-3 blocks interval
+
+    # Verify total across slices is 90%
+    assert total_slice_tokens == pytest.approx(pos.tokens_held * 0.90)
+    # Composite leg represents the aggregate 90%
+    assert pos.tp1_leg.token_amount == pytest.approx(pos.tokens_held * 0.90)
+    # VWAP is near target (above 0.00108)
+    assert pos.tp1_leg.price_sol > 0.00108
+    # 10% tokens retained as lottery runner
+    assert pos.runner_tokens_held == pytest.approx(pos.tokens_held * 0.10)
+
 

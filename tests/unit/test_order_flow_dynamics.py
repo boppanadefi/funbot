@@ -258,3 +258,146 @@ def test_cluster_risk_engine_integrates_order_flow():
     assert score.vuw >= 1.20
     assert score.aggression_ratio > 2.00
     assert score.composite_risk_score <= 0.40
+
+
+def test_syndicate_1m_spoof_defeated_by_5_block_delta_buyers():
+    """
+    Fix 4: Syndicate fires 20 fresh wallets in block N (making 1m VUW appear high ~2.0).
+    However, across blocks N+1 to N+5 (the 5-block real-time window), 0 new buyers enter.
+    Slot-level order flow requires Delta Unique Buyers >= 1 over the last 5 blocks,
+    instantly defeating the syndicate spoof trap before they can dump in N+2.
+    """
+    engine = OrderFlowDynamicsEngine(min_delta_unique_buyers_5blocks=1)
+
+    # Syndicate spoof: 1m VUW looks high, but 5-block delta is 0
+    metrics_spoof = engine.evaluate_order_flow(
+        pool_address="PoolSyndicateSpoof",
+        token_mint="MintSyndicateSpoof",
+        unique_buyers_current_1m=20,
+        unique_buyers_prior_1m=10,  # 1m VUW = 2.00 (would trick legacy 1m window)
+        delta_unique_buyers_5blocks=0,  # 0 new buyers in the last 5 blocks!
+        taker_buy_sol=15.0,
+        taker_sell_sol=2.0,
+    )
+    assert metrics_spoof.is_approved is False
+    assert metrics_spoof.delta_unique_buyers_5blocks == 0
+    assert any("Delta Unique Buyers" in r for r in metrics_spoof.rejection_reasons)
+
+    # Organic retail continuation: 3 new buyers entered across the last 5 blocks
+    metrics_organic = engine.evaluate_order_flow(
+        pool_address="PoolOrganicRealtime",
+        token_mint="MintOrganicRealtime",
+        unique_buyers_current_1m=20,
+        unique_buyers_prior_1m=10,
+        delta_unique_buyers_5blocks=3,  # Delta >= 1
+        taker_buy_sol=15.0,
+        taker_sell_sol=2.0,             # 15 / 17 = 88.2% > 70%
+    )
+    assert metrics_organic.is_approved is True
+    assert metrics_organic.delta_unique_buyers_5blocks == 3
+    assert len(metrics_organic.rejection_reasons) == 0
+
+
+def test_breakout_candle_taker_buy_dominance_threshold():
+    """
+    Fix 4: Instead of 1m Aggression Ratio, require that >70% of the SOL moved
+    in the breakout candle was Taker Buy.
+    """
+    engine = OrderFlowDynamicsEngine(min_breakout_taker_buy_pct=70.0)
+
+    # Case A: 6.5 SOL Taker Buy / 3.5 SOL Taker Sell = 65.0% <= 70.0% (Rejects)
+    pct_fail = engine.compute_breakout_taker_buy_pct(taker_buy_sol=6.5, taker_sell_sol=3.5)
+    assert pct_fail == 65.0
+    metrics_fail = engine.evaluate_order_flow(
+        pool_address="PoolDominanceFail",
+        token_mint="MintDominanceFail",
+        delta_unique_buyers_5blocks=2,
+        taker_buy_sol=6.5,
+        taker_sell_sol=3.5,
+    )
+    assert metrics_fail.is_approved is False
+    assert metrics_fail.breakout_taker_buy_pct == 65.0
+    assert any("Taker Buy dominance" in r for r in metrics_fail.rejection_reasons)
+
+    # Case B: 8.5 SOL Taker Buy / 1.5 SOL Taker Sell = 85.0% > 70.0% (Passes)
+    pct_pass = engine.compute_breakout_taker_buy_pct(taker_buy_sol=8.5, taker_sell_sol=1.5)
+    assert pct_pass == 85.0
+    metrics_pass = engine.evaluate_order_flow(
+        pool_address="PoolDominancePass",
+        token_mint="MintDominancePass",
+        delta_unique_buyers_5blocks=2,
+        taker_buy_sol=8.5,
+        taker_sell_sol=1.5,
+    )
+    assert metrics_pass.is_approved is True
+    assert metrics_pass.breakout_taker_buy_pct == 85.0
+    assert len(metrics_pass.rejection_reasons) == 0
+
+
+def test_slot_level_candidate_gate_live_engine(tmp_path):
+    """
+    Verifies that LivePaperTradingEngine correctly applies the slot-level order flow rules:
+    - Rejects if delta unique buyers over last 5 blocks < 1
+    - Rejects if breakout candle taker buy <= 70%
+    """
+    db_file = tmp_path / "test_slot_gates.db"
+    state_file = tmp_path / "slot_state.json"
+
+    engine = LivePaperTradingEngine(
+        db_path=str(db_file),
+        state_file=str(state_file),
+    )
+
+    base_pool = {
+        "pool_address": "PoolSlotGate01",
+        "token_mint": "MintSlotGate01",
+        "minutes_post_graduation": 10.0,
+        "current_sol_reserve": 35.0,
+    }
+
+    # Case 1: Rejects when 5-block delta is 0
+    quote_zero_delta = {
+        "price_sol": 0.000105,
+        "liquidity_usd": 6000.0,
+        "quote_sol_reserve": 18.0,
+        "total_txns_5m": 8,
+        "buys_5m": 6,
+        "sells_5m": 2,
+        "price_change_5m": 3.2,
+        "volume_5m_usd": 1000.0,
+        "volume_1m_usd": 200.0,
+        "buy_volume_1m_usd": 150.0,
+        "spike_peak_1m_vol": 2000.0,
+        "initial_spike_resistance_price": 0.000100,
+        "consolidation_avg_buy_vol": 50.0,
+        "delta_unique_buyers_5blocks": 0,       # 0 new buyers in last 5 blocks!
+        "taker_buy_sol": 12.0,
+        "taker_sell_sol": 2.0,
+    }
+    passed, reason = engine.evaluate_candidate_gates(base_pool, quote=quote_zero_delta)
+    assert not passed
+    assert "Delta Unique Buyers" in reason
+
+    # Case 2: Rejects when breakout candle Taker Buy is 60% (<= 70%)
+    quote_low_buy_dominance = {
+        "price_sol": 0.000105,
+        "liquidity_usd": 6000.0,
+        "quote_sol_reserve": 18.0,
+        "total_txns_5m": 8,
+        "buys_5m": 6,
+        "sells_5m": 2,
+        "price_change_5m": 3.2,
+        "volume_5m_usd": 1000.0,
+        "volume_1m_usd": 200.0,
+        "buy_volume_1m_usd": 150.0,
+        "spike_peak_1m_vol": 2000.0,
+        "initial_spike_resistance_price": 0.000100,
+        "consolidation_avg_buy_vol": 50.0,
+        "delta_unique_buyers_5blocks": 2,
+        "taker_buy_sol": 6.0,
+        "taker_sell_sol": 4.0,                  # 6 / 10 = 60.0% <= 70.0%
+    }
+    passed, reason = engine.evaluate_candidate_gates(base_pool, quote=quote_low_buy_dominance)
+    assert not passed
+    assert "Taker Buy dominance" in reason or "Breakout Candle Taker Buy Gate" in reason
+

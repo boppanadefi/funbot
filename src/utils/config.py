@@ -50,6 +50,9 @@ class RiskLimits:
     runner_size_pct: float
     runner_trailing_pct: float
     protective_stop_loss_pct: float
+    # Fix 5: Runner Hard Time Kill (<+30% within 3m of TP1)
+    runner_hard_kill_timeout_minutes: float
+    runner_target_gross_pct: float
     # Fix 3: Local-Structure & Time-Decay Exits
     structure_trailing_lookback_candles: int
     momentum_decay_stagnant_candles: int
@@ -171,11 +174,11 @@ class ConfigLoader:
             )
 
         if mode == "FRICTION_BUSTING_SCALE_OUT":
-            tp1_size = float(exit_strat.get("tp1_size_pct", 0.80))
-            runner_size = float(exit_strat.get("runner_size_pct", 0.20))
+            tp1_size = float(exit_strat.get("tp1_size_pct", 0.90))
+            runner_size = float(exit_strat.get("runner_size_pct", 0.10))
             tp1_target = float(exit_strat.get("tp1_target_gross_pct", 0.09))
             if round(tp1_size + runner_size, 4) != 1.00:
-                raise InvariantViolationError("Invariant 2: TP1 (80%) + Runner (20%) must equal 100%")
+                raise InvariantViolationError("Invariant 2: TP1 + Runner must equal 100%")
             if not (0.08 <= tp1_target <= 0.10):
                 raise InvariantViolationError("Invariant 2: TP1 target gross must be between +8% and +10%")
 
@@ -243,11 +246,13 @@ class ConfigLoader:
             prohibit_tranche_exits=bool(exit_strat.get("prohibit_tranche_exits", False)),
             total_swaps=int(exit_strat.get("total_swaps", 3)),
             scale_out_mandatory_under_usd=scale_out_cutoff,
-            tp1_size_pct=float(exit_strat.get("tp1_size_pct", 0.80)),
+            tp1_size_pct=float(exit_strat.get("tp1_size_pct", 0.90)),
             tp1_target_gross_pct=float(exit_strat.get("tp1_target_gross_pct", 0.09)),
-            runner_size_pct=float(exit_strat.get("runner_size_pct", 0.20)),
+            runner_size_pct=float(exit_strat.get("runner_size_pct", 0.10)),
             runner_trailing_pct=float(exit_strat.get("runner_trailing_pct", 0.15)),
             protective_stop_loss_pct=float(exit_strat.get("protective_stop_loss_pct", 0.10)),
+            runner_hard_kill_timeout_minutes=float(exit_strat.get("runner_hard_kill_timeout_minutes", 3.0)),
+            runner_target_gross_pct=float(exit_strat.get("runner_target_gross_pct", 0.30)),
             structure_trailing_lookback_candles=struct_lookback,
             momentum_decay_stagnant_candles=mom_stagnant,
             momentum_decay_volume_drop_pct=mom_vol_drop,

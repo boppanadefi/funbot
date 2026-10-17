@@ -31,8 +31,8 @@ def render_paper_panel(pools: List[Dict], is_dark: bool = True) -> None:
     st.markdown(
         """
         <div style="margin-bottom: 0.8rem; font-size: 0.82rem; color: var(--text-muted);">
-            <strong>Phase 4 Guardrails 2 & 7:</strong> Evaluates simulated Local-Structure & Time-Decay Exits with Friction-Busting Scale-Out 
-            (Stop Loss = Lowest Low of previous two 1m candles to absorb 30–40% wicks; 2-candle stagnation + >40% vol drop time-decay; 30s >5% slippage LP drain dump; TP1 sells 80% @ +8%–+10% gross, 20% runner) 
+            <strong>Phase 4 Guardrails 2 & 7:</strong> Evaluates simulated Local-Structure & Time-Decay Exits with Friction-Busting 90/10 Scale-Out 
+            (Stop Loss = Lowest Low of previous two 1m candles; 2-candle stagnation + >40% vol drop time-decay; 30s >5% slippage LP drain dump; TP1 sells 90% @ +8%–+10% gross; 10% runner hard-dumped if not >= +30% in 3m) 
             across 60% in-sample and 40% out-of-sample datasets under a hard $10.00 max drawdown ceiling.
         </div>
         """,
@@ -52,7 +52,7 @@ def render_paper_panel(pools: List[Dict], is_dark: bool = True) -> None:
         lowest_low = active_pos.get("lowest_low_2m_candles_sol")
 
         if is_runner:
-            badge_html = '<span class="badge badge-green">TP1 LOCKED (80% @ +9%) • FREE RUNNER (20%)</span>'
+            badge_html = '<span class="badge badge-green">TP1 LOCKED (90% @ +9%) • LOTTERY RUNNER (10% | 3m Kill)</span>'
             if struct_stop:
                 stop_label = f"{fmt_sol_price(struct_stop)} SOL (Lowest Low 2m Structure)"
             else:

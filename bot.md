@@ -3,7 +3,7 @@
 **Status:** Revised Viability Baseline — Systematic Friction-Busting & Dynamic Liquidity Architecture (Fixes 1–5 Integrated)  
 **Supersedes:** v2.4, v2.3, v2.2, v2.1, v2.0, and v1.0  
 **Scope:** Canonical SOL-quoted PumpSwap pools only (non-canonical and USDC pools excluded).  
-**Objective:** Research and develop an automated post-graduation momentum system on PumpSwap with mathematically exact cost accounting, Friction-Busting 80/20 Scale-Out, discrete structural candle-low trailing stops, Volume Consolidation + Structural Breakout entries, real-time AMM order flow dynamics, dynamic liquidity-based sizing, and uncompromised paper simulation fidelity.  
+**Objective:** Research and develop an automated post-graduation momentum system on PumpSwap with mathematically exact cost accounting, Friction-Busting 90/10 Scale-Out, discrete structural candle-low trailing stops, Volume Consolidation + Structural Breakout entries, real-time AMM order flow dynamics, dynamic liquidity-based sizing, and uncompromised paper simulation fidelity.  
 **Epistemic Posture:** All profitability and edge hypotheses are unproven until demonstrated across out-of-sample paper testing. Targets and thresholds represent **conditional viability hurdles**, not performance guarantees.  
 
 ---
@@ -12,17 +12,18 @@
 
 ### 1.1 Strategic Pivot & Core Invariant Architecture
 * **Sub-Minute Sniping Abandoned:** Micro-trades ($5–$10) on raw bonding curves fail due to fixed-cost drag (priority fees, Jito tips, ATA rent lockup), sub-second adversarial competition from low-latency searchers/bundlers, and discontinuous gap risk on developer dumps.
-* **Invariant 2 (Path A+ is Dead for < $50 — Replaced by Friction-Busting 80/20 Scale-Out):** Path A+ (100% trailing single exit) requires a +16% to +22% move just to lock in +8% net, producing an abysmal 0.14:1 Risk-to-Reward ratio where one loses $3.50 on stops to make $0.50 on winners. For positions < $50, Path A+ is dead. It is replaced by **Friction-Busting 80/20 Scale-Out**:
-  * **TP1 (The Friction Buster):** Sell 80% at a modest, achievable target of **+8% to +10% gross** (+9% default). On a $20 trade, 80% ($16) $\times$ +9% = +$1.44 gross, which almost entirely offsets the ~$1.50 round-trip friction for the whole position.
-  * **The Runner (20% Free Runner):** The remaining 20% ($4) runs with zero cost-of-capital drag. If it dumps to zero, net loss is only -$2.56 (vs -$3.50 on a 100% stop).
-* **Invariant 3 (8-Minute Cooldown is Dead — Replaced by Volume Exhaustion Consolidation + Breakout):** Time is irrelevant; market structure is everything. Entering strictly at minute 8 means buying the exact moment early snipers dump. The 8-minute hard wait is dead. It is replaced by:
+* **Invariant 2 (Path A+ is Dead for < $50 — Replaced by Friction-Busting 90/10 Scale-Out & Hard Runner Time Kill):** Path A+ (100% trailing single exit) requires a +16% to +22% move just to lock in +8% net, producing an abysmal 0.14:1 Risk-to-Reward ratio where one loses $3.50 on stops to make $0.50 on winners. For positions < $50, Path A+ is dead. Furthermore, holding a 20% runner indefinitely is bagholder logic (if price reverses, it bleeds all profits away). Replaced by **Friction-Busting 90/10 Scale-Out**:
+  * **TP1 (The Friction Buster):** Sell 90% at a modest, achievable target of **+8% to +10% gross** (+9% default). On a $20 trade, 90% ($18) $\times$ +9% = +$1.62 gross, which strictly locks in net profit after covering the ~$1.50 round-trip friction for the whole position.
+  * **The Runner (10% Lottery Runner):** The remaining 10% ($2) is purely a psychological moonshot ticket. If it dumps to zero, gross loss is only -$0.38 (vs -$2.56 on 80/20 and -$3.50 on a 100% stop).
+  * **Hard Time Kill on Runner:** If the 10% runner does not achieve **+30% gross within 3 minutes of TP1**, market dump it immediately. Do not let it bleed sideways while LP evaporates. Cut the exposure ruthlessly.
+* **Invariant 3 (8-Minute Cooldown is Dead — Replaced by Volume Exhaustion Consolidation, Baseline Demand Floor + Breakout):** Time is irrelevant; market structure is everything. Entering strictly at minute 8 means buying the exact moment early snipers dump. The 8-minute hard wait is dead. It is replaced by:
   * **Minimum 3-minute cooldown:** Bypasses the initial protocol BOOST cliff (minutes 0–3).
   * **Volume Consolidation Trigger:** Wait for 1-minute volume to drop to < 20% of peak 1-minute volume from the graduation spike (minutes 0–3), confirming sniper exhaustion.
+  * **Baseline Demand Floor (Dead Token Protection):** Volume drop is necessary but not sufficient. Absolute 1-minute volume must remain $\ge \$100\text{ USD/min}$ during consolidation. If volume drops to $\$10/\text{min}$, retail has abandoned the ticker; it is hard-rejected as a dead token to avoid entering isolated whale sweeps. If it drops to $\$150/\text{min}$ but is $< 20\%$ of peak, that is healthy consolidation.
   * **Structural Breakout:** Enter only when a candle closes above the spike resistance line with buy volume > 1.5x the consolidation average.
-* **Invariant 4 (Pre-Flight Double Gate Friction Caps Remain — Ratchet Triggers Replaced by TP1 Friction Buster):** The mathematical cost caps strictly remain (**Expected friction $\le 7.0\%$ in Regime A, $\le 6.0\%$ in Regime B; Stressed cost $\le 10.0\%$**). However, old Ratchet Triggers (+16% to +22%) are dead. They are replaced by the achievable **+8% to +10% TP1 Friction Buster**.
-* **Invariant 5 (Cluster/Burner History Checks are Dead — Replaced by Real-Time VUW & Aggression Ratio):** 2-hop funding graphs and <3 transaction heuristics are trivially bypassed by syndicates using aged wallets and mixers. Historical wallet genealogy is dead. It is replaced by real-time AMM order flow dynamics:
-  * **Velocity of Unique Wallets (VUW):** `(Unique Buyers Current 1m) / (Unique Buyers Prior 1m)` must be $\ge 1.20$ on breakout (rejects flat wash-trading wallet rotation ~1.0; demands organic retail FOMO acceleration > 1.5).
-  * **Aggression Ratio:** `Taker Buy SOL / Taker Sell SOL` must be $> 2.00$ (demands aggressive market orders sweeping the AMM curve vs balanced wash trades).
+* **Invariant 5 (Cluster/Burner History Checks are Dead — Replaced by Slot-Level 400ms Order Flow Dynamics):** 2-hop funding graphs and <3 transaction heuristics are dead (bypassed by syndicates using aged wallets and mixers). Furthermore, 1-minute rolling windows (VUW and Aggression) are lagging by 150 blocks and trivially spoofable by syndicates (firing 20 fresh wallets in block N, triggering bot entry in block N+1, and dumping in block N+2). Replaced by **Slot-Level (400ms) Real-Time Order Flow Dynamics**:
+  * **Slot-Level Delta Unique Buyers (last 5 blocks):** Requires positive progression of new distinct buyers entering across the last 5 blocks (400ms slots ~ 2.0s): $\Delta\text{Unique Buyers}_{\text{last 5 blocks}} \ge 1$. Defeats block N syndicate spoofs by requiring continuous organic buyer inflow.
+  * **Breakout Candle Taker Buy Dominance (> 70%):** Requires that $> 70\%$ of the SOL moved in the breakout candle was Taker Buy (`Taker Buy SOL / Total SOL Volume > 0.70`). Confirms curve momentum is overwhelmingly aggressive market-buy led, defeating balanced wash trades and simultaneous syndicate distribution.
 * **Capital Allocation (Fixed $10–$25 Sizing is Dead — Replaced by Dynamic Liquidity-Based Sizing Capped at $25):** Hard-rejecting pools with >2% impact for a static $20 swap starves the bot (95% of post-graduation pools lack $20 depth at minute 8). Fixed $10–$25 sizing is dead. Position size is a dependent variable of pool liquidity:
   * $\text{Max Safe Swap SOL} = 0.030 \times \text{current\_sol\_reserve}$ (exact swap size yielding $\le 1.5\%$ price impact).
   * $\text{Position Size} = \min(\text{Calculated Max Safe Swap}, \$25.00\text{ Active Wallet Limit})$.
@@ -33,21 +34,22 @@
 1. **Quote Asset:** Strictly **SOL-quoted pairs**. USDC-quoted PumpSwap pools are excluded.
 2. **Venue:** Strictly **Canonical PumpSwap pools**. Non-canonical pools remain disabled by default.
 3. **Capital Limits:** $100 total bankroll ($25 active trading wallet, $75 segregated cold reserve). Exactly **1 active position at a time** (dynamically sized up to $25 active limit).
-4. **Execution Strategy:** **Friction-Busting 80/20 Scale-Out** (TP1 sells 80% @ +8%–+10% gross; 20% free runner trails structure low).
+4. **Execution Strategy:** **Friction-Busting 90/10 Scale-Out** (TP1 sells 90% @ +8%–+10% gross; 10% lottery runner with 3m hard time kill).
 
 ### 1.3 The 7 Core Architectural Mitigations (Invariant Baseline)
 
 1. **Sub-Minute Sniping Abandoned:** No bonding-curve sniping. Secondary momentum observed **3 to 25 minutes** post-graduation.
-2. **Invariant 2 (Path A+ is Dead for < $50 — Replaced by Friction-Busting 80/20 Scale-Out & Structural Exits):**
+2. **Invariant 2 (Path A+ is Dead for < $50 — Replaced by Friction-Busting 90/10 Scale-Out & Structural Exits):**
    * **Structure-Based Trailing Stop:** Stop Loss = Lowest Low of previous two completed 1-minute candles (absorbs 30%–40% single-block wicks without clipping while macro 1m trend holds higher lows).
    * **Momentum Time-Decay Exit:** If 2 consecutive 1-minute candles pass without new local high AND volume drops >40% from breakout volume, exit 100% immediately.
    * **Liquidity Collapse Exit:** Every 30 seconds, simulate sell slippage; if > 5.0%, market dump immediately.
-   * **Friction-Busting 80/20 Scale-Out:** TP1 sells 80% at +8%–+10% gross (+9% default) to cover round-trip friction; 20% free runner rides structure stop with zero cost-of-capital drag.
-3. **Invariant 3 (8-Minute Cooldown is Dead — Replaced by Volume Consolidation + Breakout):** Minimum 3-minute cooldown (bypasses 0–3m protocol cliff), 1-minute volume dropping to < 20% of peak spike volume, and candle close above spike resistance with buy volume > 1.5x consolidation average.
+   * **Friction-Busting 90/10 Scale-Out:** TP1 sells 90% at +8%–+10% gross (+9% default) to lock in net profit after covering round-trip friction.
+   * **Runner Hard Time Kill:** If the remaining 10% lottery runner does not achieve +30% gross within 3 minutes of TP1, market dump immediately. Cut exposure ruthlessly without letting it bleed sideways while LP evaporates.
+3. **Invariant 3 (8-Minute Cooldown is Dead — Volume Exhaustion Consolidation + Baseline Demand Floor + Breakout):** Minimum 3-minute cooldown (bypasses 0–3m protocol cliff), 1-minute volume dropping to < 20% of peak spike volume, absolute 1m volume holding $\ge \$100\text{ USD/min}$ baseline demand floor (hard-rejects dead tokens $< \$100/\text{min}$), and candle close above spike resistance with buy volume > 1.5x consolidation average.
 4. **Invariant 4 (Pre-Flight Double Gate Friction Caps Remain — Ratchet Triggers Replaced by TP1 Friction Buster):** Friction caps remain (**Expected friction $\le 7.0\%$ in Regime A, $\le 6.0\%$ in Regime B; Stressed cost $\le 10.0\%$**). Ratchet triggers are replaced by the +8% to +10% TP1 Friction Buster.
-5. **Invariant 5 (Cluster/Burner History Checks are Dead — Replaced by Real-Time VUW & Aggression Ratio):**
-   * **VUW:** `(Unique Buyers Current 1m) / (Unique Buyers Prior 1m)` $\ge 1.20$.
-   * **Aggression Ratio:** `Taker Buy SOL / Taker Sell SOL` $> 2.00$.
+5. **Invariant 5 (Cluster/Burner History Checks are Dead — Replaced by Slot-Level 400ms Order Flow Dynamics):**
+   * **Slot-Level Delta Unique Buyers (last 5 blocks):** $\Delta\text{Unique Buyers}_{\text{last 5 blocks}} \ge 1$ (400ms slots $\approx 2.0\text{s}$). Replaces lagging 1m VUW to defeat single-block syndicate batch spoofs in block N by requiring continuous organic buyer inflow.
+   * **Breakout Candle Taker Buy Dominance (> 70%):** $> 70\%$ of the SOL moved in the breakout candle must be Taker Buy (`Taker Buy SOL / Total SOL Volume > 0.70`). Confirms curve momentum is overwhelmingly aggressive market-buy led, defeating balanced wash trades and simultaneous syndicate distribution.
 6. **Capital Allocation & Tip Caps (Fixed $10–$25 Sizing is Dead — Replaced by Dynamic Liquidity Sizing Capped at $25):**
    * Dynamic position sizing: $\min(\text{Calculated Max Safe Swap at 1.5\% impact}, \$25.00\text{ Limit})$. Hard floor: reject if $< \$3.00$.
    * 1.5% notional entry tip cap; Jito tip instruction placed strictly after swap instruction; 0.005 SOL emergency exit budget.
@@ -90,17 +92,17 @@ Percentages and absolute SOL values must never be summed directly. All execution
 $$C_{\%} = 100 \times \frac{\sum \text{Modeled Execution Costs (SOL)}}{\text{Original Position Deployed (SOL)}}$$
 
 ### 3.2 Execution Path Taxonomy (v2.5)
-A momentum trade is strictly evaluated under the **Friction-Busting 80/20 Scale-Out** architecture:
+A momentum trade is strictly evaluated under the **Friction-Busting 90/10 Scale-Out** architecture:
 
 | Path Identifier | Scenario Description | Swap Sequence | Legs Modeled | Status |
 | :--- | :--- | :--- | :--- | :--- |
-| **Friction-Busting Scale-Out** | 80% TP1 @ +8%–+10% gross, 20% Free Runner | Entry $\rightarrow$ TP1 (80%) $\rightarrow$ Runner Exit (20%) | **Up to 3 swaps** | **MANDATORY (< $50)** |
+| **Friction-Busting 90/10 Scale-Out** | 90% TP1 @ +8%–+10% gross, 10% Lottery Runner (3m Hard Kill) | Entry $\rightarrow$ TP1 (90%) $\rightarrow$ Runner Exit (10%) | **Up to 3 swaps** | **MANDATORY (< $50)** |
 | **Path C: Entry Failure** | Transaction reverts or expires | Entry attempt only | 0 swaps (network fees only) | Active Guardrail |
 | ~~**Path A+: 100% Ratchet**~~ | ~~100% trailing single exit with +16%–+22% hurdle~~ | ~~Entry $\rightarrow$ 100% Trailing Exit~~ | ~~2 swaps~~ | **DEAD (< $50)** |
 | ~~**Path B: 50/50 Scaled Exit**~~ | ~~Normal 50% TP1 exit~~ | ~~Entry $\rightarrow$ 50% TP1 $\rightarrow$ 50% Runner~~ | ~~3 swaps~~ | **PROHIBITED** |
 
 > [!IMPORTANT]
-> **Path A+ is Dead (< $50):** The 100% trailing ratchet requires an unattainable +16% to +22% gross move just to lock in +8% net, producing an unacceptable 0.14:1 R:R ratio ($3.50 loss on stops vs $0.50 gain on winners). Friction-Busting 80/20 Scale-Out is mandatory for all positions < $50.
+> **Path A+ is Dead (< $50):** The 100% trailing ratchet requires an unattainable +16% to +22% gross move just to lock in +8% net, producing an unacceptable 0.14:1 R:R ratio ($3.50 loss on stops vs $0.50 gain on winners). Friction-Busting 90/10 Scale-Out is mandatory for all positions < $50. Sells 90% at +8%–+10% gross to lock in net profit after friction; 10% runner is strictly hard-killed if not >= +30% in 3 minutes of TP1.
 
 ### 3.3 Transaction Overhead Components
 For every transaction submission $i$, total transaction overhead in SOL is:
@@ -149,23 +151,34 @@ $$\text{Stress Cost (SOL)} = \text{Expected Cost} + \text{AdverseSlippageBuffer 
 A candidate passes the cost hurdle **only if all three conditions are satisfied**:
 1. $C_{\%,\text{expected}} \le \text{GateCap}(T)$, where GateCap varies by regime (**Regime A: 7.0%, Regime B: 6.0%**).
 2. $C_{\%,\text{stress}} \le 10.0\%$ (hard safety ceiling).
-3. **Invariant 4: Ratchet Triggers are Dead. Replaced by the +8% to +10% TP1 Friction Buster:** Candidate must support entry into the achievable **+8.0% to +10.0% TP1 Friction Buster** target (+9.0% default), which pays roundtrip friction on the 80% tranche without requiring extreme +16% to +22% moves.
+3. **Invariant 4: Ratchet Triggers are Dead. Replaced by the +8% to +10% TP1 Friction Buster:** Candidate must support entry into the achievable **+8.0% to +10.0% TP1 Friction Buster** target (+9.0% default), which pays roundtrip friction on the 90% tranche without requiring extreme +16% to +22% moves.
 
 ---
 
-## 4. Friction-Busting 80/20 Scale-Out & Discrete Structural Exits
+## 4. Friction-Busting 90/10 Scale-Out & Discrete Structural Exits
 
-### 4.1 Friction-Busting 80/20 Mechanics (Path A+ Replacement)
-Under Friction-Busting Scale-Out, the system addresses micro-position friction head-on:
+### 4.1 Friction-Busting 90/10 Mechanics (Kill the Free Runner)
+Under Friction-Busting 90/10 Scale-Out, the system addresses micro-position friction and eliminates bagholder drag:
 
 1. **Two-Stage Execution:**
-   * **TP1 (The Friction Buster):** Sells 80% of the position at an achievable **+8% to +10% gross** (+9% default). On a $20 trade, 80% ($16) $\times$ +9% = +$1.44 gross, which almost entirely pays for the ~$1.50 round-trip friction.
-   * **The Runner (20% Free Runner):** The remaining 20% ($4) runs with zero cost-of-capital drag. If it dumps to zero, net trade loss is only -$2.56 (vs -$3.50 on a 100% stop). If it runs +100% to +500%, tail upside is captured cleanly.
-2. **Discrete Structural Trailing Stop:** Continuous percentage trails (e.g. 10%–15% from peak) fail on Solana AMM micro-liquidity because single-block wicks (30%–40%) trigger false exits at the bottom of temporary cascades before trend resumption. Instead, the stop trails based on candle lows:
+   * **TP1 (The Friction Buster):** Sells 90% of the position at an achievable **+8% to +10% gross** (+9% default). On a $20 trade, 90% ($18) $\times$ +9% = +$1.62 gross, which completely pays for the ~$1.50 round-trip friction and locks in net profit.
+   * **The Runner (10% Lottery Runner):** The remaining 10% ($2) is purely a psychological lottery ticket. If it dumps to zero, gross trade loss is strictly -$0.38 (vs -$2.56 on 80/20 and -$3.50 on a 100% stop).
+2. **Hard Time Kill on Runner (Anti-Bagholder Execution):**
+   * **The Problem:** The free runner trailing candle lows often bleeds all the way down on 70% of meme coin reversals, giving back all TP1 profits.
+   * **The Fix:** If the 10% runner does not achieve **+30% gross within 3 minutes of TP1**, market dump it immediately. Do not let it bleed sideways while LP evaporates. Cut exposure ruthlessly.
+3. **Time-Sliced TP1 Execution (Anti-MEV / Sandwich Attack Defense):**
+   * **The MEV Piñata Problem:** In Solana micro-cap AMMs, dumping 90% in a single market sell transaction *is the market*. Searchers sandwich the large order, causing a 5%–8% AMM curve cascade that degrades fills from +9% down to +2%.
+   * **The Fix (Time-Sliced TP1):** Never market-sell 90% in one transaction. The 90% TP1 tranche is split into **3 equal sells (30% of original position each)** spaced **2 to 3 blocks apart (~800ms–1.2s)**.
+   * **Why It Works:**
+     * **Minimizes Self-Impact:** Each 30% slice restricts per-block curve displacement to $\approx 0.20\%$ (compared to 5%–8% on a single dump).
+     * **Exogenous Liquidity Replenishment:** Slices allow organic retail buy flow to absorb sales between blocks.
+     * **Defeats Sandwich Attacks:** Each slice is submitted in an atomic Jito bundle with tips placed after the swap; small 30% footprints prevent searchers from profitably sandwiching the order.
+     * **Preserves +9% Target:** The volume-weighted average fill price ($VWAP_{\text{TP1}}$) lands cleanly at the +8.5% to +9.0% target, securing net profit before unlocking the lottery runner.
+4. **Discrete Structural Trailing Stop:** Continuous percentage trails (e.g. 10%–15% from peak) fail on Solana AMM micro-liquidity because single-block wicks (30%–40%) trigger false exits at the bottom of temporary cascades before trend resumption. Instead, the stop trails based on candle lows:
    $$\text{StructureStopPrice}(t) = \min(\text{Low}_{\text{candle}[-1]}, \text{Low}_{\text{candle}[-2]})$$
    The stop ratchets upward monotonically and holds as long as the macro 1-minute trend preserves higher lows.
-3. **Momentum Time-Decay Exit:** If 2 consecutive 1-minute candles pass without making a new local high AND volume drops **> 40%** from the entry-breakout volume, exit 100% immediately without waiting for the trailing stop to be tagged (liquidity silently evaporates).
-4. **Liquidity Collapse Exit:** Every 30 seconds, simulate a sell quote on remaining tokens; if estimated slippage exceeds **5.0%**, market dump immediately (LP drain defense).
+5. **Momentum Time-Decay Exit:** If 2 consecutive 1-minute candles pass without making a new local high AND volume drops **> 40%** from the entry-breakout volume, exit 100% immediately without waiting for the trailing stop to be tagged (liquidity silently evaporates).
+6. **Liquidity Collapse Exit:** Every 30 seconds, simulate a sell quote on remaining tokens; if estimated slippage exceeds **5.0%**, market dump immediately (LP drain defense).
 
 ### 4.2 Net Portfolio Cash-Flow Formula (Scale-Out Architecture)
 $$R_{\text{net}} = (\text{SOL}_{\text{TP1}} + \text{SOL}_{\text{Runner}}) - \text{SOL}_{\text{spent}} - \sum_{i=1}^{\text{legs}} \text{TxOverhead}_i - \text{FailedTxPenalties}$$
@@ -210,7 +223,7 @@ Reclaiming the `~0.00204 SOL` ATA rent is a **best-effort post-trade background 
   * 1-minute volume dropping to < 20% of initial spike peak, followed by candle close above spike resistance with buy volume > 1.5x consolidation average.
   * Real-Time Order Flow: $\text{VUW} \ge 1.20$ and $\text{Aggression Ratio} > 2.00$.
   * Price impact $\le 1.5\%$ via Dynamic Liquidity Sizing.
-* **TP1 Friction Buster Target (+8% to +10% Gross):** Replaces the dead Ratchet Trigger (+16% to +22%). TP1 sells 80% at +9% default (+8% to +10% range) to lock in ~+$1.44 and cover round-trip friction.
+* **TP1 Friction Buster Target (+8% to +10% Gross):** Replaces the dead Ratchet Trigger (+16% to +22%). TP1 sells 90% at +9% default (+8% to +10% range) to lock in ~+$1.62 and cover round-trip friction.
 
 ### 5.2 Regime B: Tier 2+ Continuation & Expansion ($\ge$ 420 SOL Market Cap)
 * **Context:** Tokens breaking above 420 SOL into Tier 2 (1.200%) and Tier 3 (1.150%). Deeper reserves and lower fee drag.
@@ -218,7 +231,7 @@ Reclaiming the `~0.00204 SOL` ATA rent is a **best-effort post-trade background 
   * Structural breakout with volume exhaustion consolidation.
   * Real-Time Order Flow: $\text{VUW} \ge 1.20$ and $\text{Aggression Ratio} > 2.00$.
   * Price impact $\le 1.5\%$ via Dynamic Liquidity Sizing.
-* **TP1 Friction Buster Target:** +8% to +10% gross (+9% default) on 80% tranche, leaving 20% Free Runner.
+* **TP1 Friction Buster Target:** +8% to +10% gross (+9% default) on 90% tranche, leaving 10% Lottery Runner (with 3-minute hard time kill).
 
 ---
 
@@ -288,58 +301,126 @@ Paper trading must reflect real execution conditions to prevent generating illus
 
 ---
 
-## 9. Complete Lifecycle State Machine
+## 9. Complete Lifecycle State Machine (Friction-Busting 90/10 & Market Structure)
+
+The execution engine operates as a strictly deterministic, finite state machine enforcing the 90/10 lifecycle:
+`VOLUME_EXHAUSTION` → `BREAKOUT_CONFIRMED` → `POSITION_ACTIVE` → `TP1_FRICTION_BUSTER_HIT (90%)` → `RUNNER_ACTIVE (10%)` → `RUNNER_HARD_TIME_KILL / STRUCTURE_STOP_HIT` → `CLOSED`.
 
 ```text
-                  GRADUATION DETECTED
-                           │
-                           ▼
-                      [DISCOVERED]
-                           │
-                           ▼
-                     [STABILIZING] (8–25 min cooldown)
-                           │
-                 ┌─────────┴─────────┐
-                 ▼                   ▼
-          [SCREEN_REJECT]      [SCREEN_PASS]
-          (Depth/Holder fail)        │
-                                     ▼
-                            [ANALYSIS_PENDING]
-                                     │
-                 ┌───────────────────┴───────────────────┐
-                 ▼                                       ▼
-          [GATE_REJECT]                           [ENTRY_PENDING]
-          (Cost/Hurdle fail)                             │
-                                        ┌────────────────┼────────────────┐
-                                        ▼                ▼                ▼
-                                 [ENTRY_FAILED]   [ENTRY_EXPIRED]  [ENTRY_CONFIRMED]
-                                 (Tx revert)      (Dropped bundle)        │
-                                                                          ▼
-                                                                  [POSITION_ACTIVE]
-                                                                          │
-                                                         ┌────────────────┴────────────────┐
-                                                         ▼                                 ▼
-                                              [RATCHET_TRIGGERED]                 [INITIAL_STOP_HIT]
-                                             (Stop moved to +8% net)                       │
-                                                         │                                 ▼
-                                                         ▼                         [EXIT_PENDING]
-                                                 [TRAILING_ACTIVE]                         │
-                                              (Trails peak by 10-15%)                      ▼
-                                                         │                         [EXIT_CONFIRMED]
-                                                         ▼                                 │
-                                                [FULL_EXIT_PENDING]                        ▼
-                                                (Trailing stop hit)               [CLOSED_PENDING_CLEANUP]
-                                                         │                                 │
-                                                         ▼                                 ▼
-                                                 [EXIT_CONFIRMED]                 [ARCHIVED_COMPLETE]
-                                                         │                      (ATA closed, rent swept)
-                                                         ▼
-                                                [CLOSED_PENDING_CLEANUP]
-                                                         │
-                                                         ▼
-                                                  [ARCHIVED_COMPLETE]
-                                                 (ATA closed, rent swept)
+                                GRADUATION DETECTED
+                                         │
+                                         ▼
+                                   [DISCOVERED]
+                                         │
+                                         ▼
+                            [COOLDOWN_CLIFF_BYPASS]
+                        (Minutes 0–3 protocol cliff wait)
+                                         │
+                                         ▼
+                            [VOLUME_EXHAUSTION_MONITOR]
+                    (1m volume drops to < 20% of 0-3m spike peak
+                     AND 1m volume >= $100 baseline demand floor)
+                                         │
+                      ┌──────────────────┴──────────────────┐
+                      ▼                                     ▼
+             [EXHAUSTION_FAILED / DEAD_TOKEN]      [VOLUME_EXHAUSTION]
+             (Dump continues OR vol < $100/min)    (Healthy consolidation confirmed)
+                                                            │
+                                                            ▼
+                                                   [BREAKOUT_MONITOR]
+                                         (Price vs spike peak resistance +
+                                          buy volume > 1.5x consolidation avg)
+                                                            │
+                                  ┌─────────────────────────┴─────────────────────────┐
+                                  ▼                                                   ▼
+                          [BREAKOUT_REJECT]                                  [BREAKOUT_CONFIRMED]
+                          (No break / VUW < 1.2 / Agg < 2.0)                          │
+                                                                                      ▼
+                                                                             [ANALYSIS_PENDING]
+                                                                        (Pre-Flight Double Gate:
+                                                                         Expected <= 7%/6%, Stress <= 10%,
+                                                                         Dynamic Sizing: $3.00 - $25.00)
+                                                                                      │
+                                                    ┌─────────────────────────────────┴─────────────────────────────────┐
+                                                    ▼                                                                   ▼
+                                             [GATE_REJECT]                                                       [ENTRY_PENDING]
+                                       (Friction/Min Swap < $3 fail)                                                    │
+                                                                                    ┌───────────────────────────────────┼───────────────────────────────────┐
+                                                                                    ▼                                   ▼                                   ▼
+                                                                             [ENTRY_FAILED]                      [ENTRY_EXPIRED]                     [ENTRY_CONFIRMED]
+                                                                             (Tx revert)                         (Dropped bundle)                           │
+                                                                                                                                                            ▼
+                                                                                                                                                    [POSITION_ACTIVE]
+                                                                                                                                             (100% position acquired: $3–$25)
+                                                                                                                                                            │
+                                                                               ┌────────────────────────────────────────────────────────────────────────────┴──────────────────────────────────────┐
+                                                                               ▼                                                                                                                   ▼
+                                                                  [TP1_FRICTION_BUSTER_HIT]                                                                                           [INITIAL_STOP_OR_DECAY_HIT]
+                                                                 (+8% to +10% gross hit; default +9%)                                                                              (Hard -10% stop, time-decay 2m,
+                                                                               │                                                                                                    or LP slippage > 5.0% tagged)
+                                                                               ▼                                                                                                                   │
+                                                                    [TP1_EXIT_CONFIRMED]                                                                                                           ▼
+                                                                  (Time-sliced 90% sold in 3x30% slices; ~$1.62 gross secures                                                             [FULL_EXIT_PENDING]
+                                                                   round-trip friction for entire trade)                                                                                   (100% position dumped)
+                                                                               │                                                                                                                   │
+                                                                               ▼                                                                                                                   ▼
+                                                                        [RUNNER_ACTIVE]                                                                                                    [EXIT_CONFIRMED]
+                                                                  (Remaining 10% lottery runner;                                                                                                   │
+                                                                   trails lowest low of prev 2 completed 1m candles;                                                                               ▼
+                                                                   hard time kill at 3m if < +30% gross)                                                                                   [CLOSED_PENDING_CLEANUP]
+                                                                               │                                                                                                                   │
+                                                    ┌──────────────────────────┼──────────────────────────┐                                                                                        ▼
+                                                    ▼                          ▼                          ▼                                                                                [ARCHIVED_COMPLETE]
+                                          [RUNNER_HARD_TIME_KILL]     [STRUCTURE_STOP_HIT]       [RUNNER_DECAY_HIT]                                                                       (ATA closed, rent swept)
+                                          (3m elapsed without         (Candle-low structure      (2m no high + 40% vol drop
+                                           hitting >= +30% gross)      breached)                  or LP drain > 5%)
+                                                    │                          │                          │
+                                                    └──────────────────────────┼──────────────────────────┘
+                                                                               ▼
+                                                                     [RUNNER_EXIT_PENDING]
+                                                                      (Remaining 10% sold)
+                                                                               │
+                                                                               ▼
+                                                                      [RUNNER_CONFIRMED]
+                                                                               │
+                                                                               ▼
+                                                                    [CLOSED_PENDING_CLEANUP]
+                                                                               │
+                                                                               ▼
+                                                                      [ARCHIVED_COMPLETE]
+                                                                    (ATA closed, rent swept)
 ```
+
+### 9.1 State Transition Definitions
+
+1. **`DISCOVERED` & `COOLDOWN_CLIFF_BYPASS`:**
+   * Canonical SOL-quoted PumpSwap pool identified post-migration.
+   * Enforces a mandatory 3-minute cooldown (minutes 0.0 to 3.0) to bypass the literal protocol buyback cliff where initial pump spikes are heavily dumped.
+2. **`VOLUME_EXHAUSTION` & Baseline Demand Floor:**
+   * Transition occurs when 1-minute volume drops to `< 20%` of the peak 1-minute volume recorded during the graduation spike (minutes 0–3).
+   * **Baseline Demand Floor (Dead Token Protection):** Volume drop is necessary but not sufficient. Absolute 1-minute volume must remain $\ge \$100\text{ USD/min}$ during consolidation. If volume drops to $\$10/\text{min}$, retail has abandoned the token; it is flagged as a dead token and hard-rejected to prevent buying isolated whale sweeps on illiquid curves. If volume drops to $\$150/\text{min}$ but is $< 20\%$ of peak, that is healthy consolidation.
+3. **`BREAKOUT_CONFIRMED`:**
+   * Requires a 30-second candle close above the initial spike resistance level with buy volume `> 1.5x` the consolidation average.
+   * Concurrently validates real-time slot-level (400ms) AMM order flow dynamics: Delta Unique Buyers over the last 5 blocks ($\Delta\text{Unique Buyers}_{\text{last 5 blocks}} \ge 1$) and Breakout Candle Taker Buy Dominance ($> 70\%$ of breakout candle SOL volume was Taker Buy), defeating 1m syndicate batch spoofs and balanced wash trades.
+4. **`ANALYSIS_PENDING` (Pre-Flight Double Gate & Dynamic Sizing):**
+   * Computes Dynamic Liquidity-Based Sizing: $\Delta x_{\text{sol}} = 0.030 \times \text{sol\_reserve}$ ($1.5\%$ max safe impact). Position size $= \min(\text{Max Safe Swap}, \$25.00)$.
+   * Rejects immediately if Calculated Max Safe Swap $< \$3.00$.
+   * Enforces Double Gate friction caps: Expected cost $\le 7.0\%$ (Regime A) or $\le 6.0\%$ (Regime B), and Stressed cost $\le 10.0\%$.
+5. **`POSITION_ACTIVE`:**
+   * 100% position acquired via Jito atomic bundle. Initial hard protective stop placed at $-10\%$.
+   * Initiates continuous discrete candle-low tracking and LP liquidity monitoring.
+6. **`TP1_FRICTION_BUSTER_HIT`:**
+   * Triggers when market price hits $+8\%$ to $+10\%$ gross ($+9\%$ default).
+   * Executes time-sliced sell of **90% of the position** (3 equal slices of 30% spaced 2-3 blocks / ~1.0s apart), locking in $\approx +\$1.62$ gross on a $\$20$ trade, which completely offsets the $\approx \$1.50$ round-trip friction for the entire position.
+7. **`RUNNER_ACTIVE`:**
+   * Retains the remaining **10% of the position** as a Lottery Runner ($2 on a $20 position).
+   * **Hard Time Kill on Runner:** If the 10% runner does not achieve $\ge +30\%$ gross within 3 minutes of TP1, the engine market dumps it immediately, ruthlessly cutting exposure before liquidity evaporates.
+   * If the runner achieves $\ge +30\%$ gross within 3 minutes, it survives the time kill and trails using discrete structural candle lows: Stop Loss = Lowest Low of the previous two completed 1-minute candles.
+8. **`STRUCTURE_STOP_HIT` / `RUNNER_HARD_TIME_KILL` / `RUNNER_DECAY_HIT`:**
+   * Triggered when the 3-minute hard time kill expires without hitting $+30\%$ gross, when a candle breaches the candle-low trailing floor, when 2 consecutive 1m candles fail to print a new high with volume dropping $>40\%$ (time-decay), or when simulated LP slippage exceeds $5.0\%$ (liquidity drain protection).
+   * Liquidates the remaining 10% runner.
+9. **`CLOSED_PENDING_CLEANUP` & `ARCHIVED_COMPLETE`:**
+   * Position fully closed. Spl-token ATA is closed, reclaiming $\approx 0.00204\text{ SOL}$ rent into the active wallet.
 
 ---
 
@@ -350,20 +431,20 @@ Paper trading must reflect real execution conditions to prevent generating illus
 
 ### 10.1 Phase 1 Responsibilities
 1. **Canonical Pool Discovery:** Monitor the PumpSwap program for pool creation and migration events. Verify canonical status and identify quote asset (SOL vs USDC).
-2. **State Tracking:** Track each pool through the 8–25 minute stabilization window. Record token price, reserve levels, and market-cap tier transitions (420 SOL and 1,470 SOL boundaries).
+2. **State Tracking:** Track each pool through the secondary window (minutes 3 to 25 post-graduation). Record token price, reserve levels, and market-cap tier transitions (420 SOL and 1,470 SOL boundaries).
 3. **Basic Flow Telemetry:** Ingest raw swap events; compute rolling 10s, 30s, 60s volume, buy/sell transaction counts, and raw unique wallet counts.
 4. **Feed Reliability & Telemetry Audit:** Log feed completeness, stream disconnects, reconnection latency, and reserve reconciliation deltas.
-5. **Observational Watchlist States:** Maintain pool states: `MIGRATED`, `STABILIZING`, `TRACKING`, `DROPPED`. Fields requiring Phase 2/3 engines (e.g. `cluster_score`, `stress_cost`) are recorded explicitly as `NOT_EVALUATED`.
+5. **Observational Watchlist States:** Maintain pool states: `MIGRATED`, `CLIFF_BYPASS`, `VOLUME_EXHAUSTION`, `BREAKOUT_CONFIRMED`, `TRACKING`, `DROPPED`. Fields requiring Phase 2/3 engines (e.g. `cluster_score`, `stress_cost`) are recorded explicitly as `NOT_EVALUATED`.
 
-### 10.2 Phase 1 Falsification Gate (Critical Addition)
+### 10.2 Phase 1 Falsification Gate (Empirical Kill Criteria)
 Phase 1 must arm itself with explicit kill criteria before any engineering spend on Phase 2/3:
 
 | Criterion | Pass Threshold | Kill Threshold |
 | :--- | :--- | :--- |
-| Candidate Supply | ≥ 3 candidates/day survive post-buyback cliff | < 1 candidate/day survives |
-| Executable Depth | ≥ 20% of candidates have depth for $20 with <2% impact | > 95% fail depth screen |
-| Friction Feasibility | Modeled friction ≤ 7.0% on ≥ 20% of candidates | Friction > gross upside on 100% |
-| Buyback Cliff Survival | Minimal volume collapse at minute 6–7 | Severe liquidity evaporation |
+| **Candidate Supply** | ≥ 3 candidates/day survive 3m cooldown & form volume consolidation | < 1 candidate/day survives |
+| **Executable Depth (Dynamic Sizing)** | ≥ 20% of candidates support Dynamic Sizing (Calculated Max Safe Swap ≥ $3.00 at ≤ 1.5% impact, capped at $25) | > 95% fail dynamic depth screen (Max Safe Swap < $3.00) |
+| **Friction Feasibility** | Modeled friction ≤ 7.0% (Regime A) / ≤ 6.0% (Regime B) on ≥ 20% of candidates | Friction > gross upside on 100% of candidates |
+| **Volume Exhaustion & Breakout Viability** | 1m volume drops to < 20% of 0–3m spike peak, confirming seller exhaustion and enabling structural breakout | Severe unexhausted selling dumps continuing past 25m without consolidation |
 
 If kill thresholds are triggered: **TERMINATE PROJECT**. If pass thresholds are met: **PROCEED TO PHASE 2**.
 

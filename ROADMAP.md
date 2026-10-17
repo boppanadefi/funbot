@@ -24,7 +24,7 @@ graph TD
     P2["Phase 2: Order Flow Dynamics & Risk Engine<br/><i>(21 Days, Real-Time VUW + Aggression)</i>"]:::core
     P3["Phase 3: Dynamic Cost & Double Gate Engine<br/><i>(14 Days, Tiered PumpSwap Fees + Jito Tips)</i>"]:::core
 
-    P4["Phase 4: Paper Trading & Validation Pipeline<br/><i>(28 Days, Friction-Busting 80/20 Scale-Out)</i>"]:::observational
+    P4["Phase 4: Paper Trading & Validation Pipeline<br/><i>(28 Days, Friction-Busting 90/10 Scale-Out)</i>"]:::observational
     G2{"Phase 4 Out-of-Sample Gate<br/>Positive Expectancy | Max DD < $10"}:::gate
 
     P5["Phase 5: Live Micro-Trading Control Center<br/><i>(Operator Review, $10 Daily Halt, Kill Switch)</i>"]:::ui
@@ -133,7 +133,7 @@ graph TD
   * **Integration Hub:** Glues telemetry signals, cluster safety, and dynamic cost accounting into a deterministic paper execution engine.
   * **Data Flow Consumed:** Full historical stream split 60% in-sample / 40% chronologically contiguous out-of-sample.
 * **Invariants Enforced:**
-  * Guardrail 2: **Friction-Busting Scale-Out (Modified Path B)**. Path A+ prohibited for positions < $50. Two-stage exit: TP1 (80% at +8%–+10% gross) covers round-trip friction; remaining 20% free runner trails with a 15% stop with zero cost-of-capital drag.
+  * Guardrail 2: **Friction-Busting Scale-Out (Modified Path B)**. Path A+ prohibited for positions < $50. Two-stage exit: TP1 (sells 90% at +8%–+10% gross via 3x30% time-sliced tranches) completely covers round-trip friction; remaining 10% lottery runner has a 3-minute hard time kill if < +30% gross (otherwise trails discrete candle-low stops).
   * Guardrail 7: Enforces $10 maximum daily loss capacity and 20-minute fallback holding timeout.
 
 ---

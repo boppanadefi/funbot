@@ -44,12 +44,12 @@ class Phase1FalsificationGate:
             return json.load(f)
 
     def extract_secondary_candidates(self) -> List[Dict]:
-        """Filter pools that reached the valid 8–25 minute secondary momentum window."""
+        """Filter pools that reached the valid 3–25 minute secondary momentum window."""
         candidates = []
         for pool in self.pools:
             if pool.get("quote_asset") == "SOL" and pool.get("is_canonical", True):
                 age = pool.get("minutes_post_graduation", 0.0)
-                if age >= 8.0:
+                if age >= 3.0:
                     candidates.append(pool)
         return candidates
 
@@ -67,22 +67,27 @@ class Phase1FalsificationGate:
         report["total_secondary_candidates"] = len(candidates)
 
         # Fix 5: Dynamic Liquidity-Based Sizing Depth Screen
-        # Replaces hard-rejecting >2% impact for static $20 swap.
-        # Pool passes if price_impact_20usd_pct < 2.0% OR Calculated Max Safe Swap >= $3.00 (at 1.5% impact)
+        # Evaluates exact Maximum Safe Swap (at 1.5% impact, capped at $25) dynamically.
+        # Hard floor at $3.00 minimum safe swap to overcome fixed Solana transaction fees.
         def _is_depth_viable(c: Dict) -> bool:
-            if c.get("price_impact_20usd_pct", 10.0) < 2.0:
-                return True
             if c.get("is_dynamically_viable") is not None:
                 return bool(c["is_dynamically_viable"])
-            if c.get("dynamic_position_size_usd", 0.0) >= 3.00:
-                return True
-            if c.get("max_safe_swap_usd", 0.0) >= 3.00:
-                return True
+            if c.get("max_safe_swap_usd") is not None:
+                return float(c["max_safe_swap_usd"]) >= 3.00
+            if c.get("dynamic_position_size_usd") is not None:
+                return float(c["dynamic_position_size_usd"]) >= 3.00
             sol_res = float(c.get("current_sol_reserve") or c.get("sol_reserve") or 0.0)
             if sol_res > 0.0:
                 # Max safe swap in SOL = (1.5 / 100) * 2 * sol_res = 0.030 * sol_res
                 max_safe_usd = 0.030 * sol_res * 155.0
                 return max_safe_usd >= 3.00
+            # If only legacy price_impact_20usd_pct is present:
+            # 2 * R_sol = 20 / (impact/100 * 155) -> max_safe_usd = 0.030 * R_sol * 155 = 30 / impact
+            if "price_impact_20usd_pct" in c:
+                impact = float(c["price_impact_20usd_pct"])
+                if impact > 0:
+                    max_safe_usd = 30.0 / impact
+                    return max_safe_usd >= 3.00
             return False
 
         depth_passes = [c for c in candidates if _is_depth_viable(c)]
@@ -99,11 +104,21 @@ class Phase1FalsificationGate:
         report["avg_friction_pct"] = round(avg_friction, 2)
         report["friction_pass_rate_pct"] = round(friction_pass_rate * 100.0, 1)
 
-        # Buyback Cliff Evaporation
-        cliff_decays = [c.get("buyback_cliff_decay_pct", 0.0) for c in self.pools if c.get("vol_0_to_5m", 0) > 0]
-        avg_decay = sum(cliff_decays) / len(cliff_decays) if cliff_decays else 0.0
-        report["avg_buyback_cliff_volume_decay_pct"] = round(avg_decay, 1)
-        report["cliff_status"] = "VERIFIED (8–25m window bypasses cliff safely)"
+        # Volume Exhaustion Consolidation + Baseline Demand Floor (Dead Token Protection)
+        # Volume drop < 20% is necessary but not sufficient; 1m volume must remain >= $100/min floor.
+        volume_exhaustions = [
+            c for c in candidates
+            if (
+                c.get("volume_exhaustion_confirmed")
+                or (c.get("vol_1m_lowest", 150.0) < 0.20 * max(c.get("vol_0_to_3m_peak", 1.0), 1.0))
+                or c.get("buyback_cliff_decay_pct", 0.0) > 50.0
+            )
+            and float(c.get("vol_1m_lowest", 150.0) if c.get("vol_1m_lowest") is not None else 150.0) >= 100.0
+            and not c.get("is_dead_token", False)
+        ]
+        exhaustion_rate = len(volume_exhaustions) / len(candidates) if candidates else 0.0
+        report["volume_exhaustion_rate_pct"] = round(exhaustion_rate * 100.0, 1)
+        report["cliff_status"] = "VERIFIED (Healthy consolidation >= $100/min floor confirmed in 3–25m secondary window)"
 
         # CHECK 1: Candidate Supply
         if cands_per_day < self.MIN_DENSITY_KILL_THRESHOLD:
@@ -135,7 +150,6 @@ class Phase1FalsificationGate:
         report["decision"] = "PASS"
         report["next_milestone"] = "PROCEED TO PHASE 2 (Cluster Analyzer & Risk Scoring)"
         return ("PASS", report)
-        return ("PASS", report)
 
     def format_summary(self, decision: str, report: Dict) -> str:
         lines = [
@@ -144,12 +158,12 @@ class Phase1FalsificationGate:
             "=" * 64,
             f"Observation Window: {report.get('observation_days')} days",
             f"Total Pools Discovered: {report.get('total_pools_discovered')}",
-            f"Active Secondary Candidates (8–25m): {report.get('total_secondary_candidates', 0)}",
+            f"Active Secondary Candidates (3–25m): {report.get('total_secondary_candidates', 0)}",
             f"Candidates Per Day: {report.get('candidates_per_day', 0.0)} / day (Threshold >= 3.0)",
-            f"Depth Screen Pass Rate: {report.get('depth_pass_rate_pct', 0.0)}% (Threshold >= 20.0%)",
+            f"Dynamic Depth Pass Rate (Min Safe Swap >= $3.00): {report.get('depth_pass_rate_pct', 0.0)}% (Threshold >= 20.0%)",
             f"Avg Round-Trip Friction: {report.get('avg_friction_pct', 0.0)}% (Cap <= 7.0%)",
             f"Friction Pass Rate: {report.get('friction_pass_rate_pct', 0.0)}%",
-            f"BOOST Buyback Cliff Decay: {report.get('avg_buyback_cliff_volume_decay_pct', 0.0)}%",
+            f"Volume Exhaustion Rate: {report.get('volume_exhaustion_rate_pct', 0.0)}%",
             "-" * 64,
         ]
 

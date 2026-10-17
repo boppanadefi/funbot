@@ -3,7 +3,9 @@ Market Structure & Volume Exhaustion Consolidation Engine.
 Enforces Invariant 3: Replaces static 8-minute cooldown with "Volume Consolidation + Structural Break".
 1. Minimum 3-minute cooldown post-graduation (bypasses literal protocol cliff).
 2. Consolidation Trigger: 1m volume drops to < 20% of initial graduation spike peak 1m volume (minutes 0-3).
-3. Structural Breakout: Candle closes above initial spike resistance with buy volume > 1.5x consolidation average.
+3. Baseline Demand Floor: Absolute 1m volume must remain >= $100 USD/min during consolidation.
+   Tokens dropping below $100/min (e.g. $10/min) are dead tokens (abandoned retail); hard reject.
+4. Structural Breakout: Candle closes above initial spike resistance with buy volume > 1.5x consolidation average.
 """
 
 from dataclasses import dataclass, field
@@ -30,6 +32,9 @@ class PoolMarketStructure:
     consolidation_buy_volumes: List[float] = field(default_factory=list)
     consolidation_avg_buy_vol: float = 0.0
     lowest_consolidation_vol_1m: float = float("inf")
+    baseline_demand_floor_usd: float = 100.0
+    is_dead_token: bool = False
+    dead_token_reason: str = ""
 
     # Phase 3: Structural Breakout Metrics
     breakout_confirmed: bool = False
@@ -41,6 +46,7 @@ class PoolMarketStructure:
 class MarketStructureTracker:
     """
     Tracks tick-by-tick market structure and identifies volume exhaustion consolidation + structural breakout.
+    Enforces Baseline Demand Floor (>= $100/min) to prevent buying dead token whale traps.
     """
 
     def __init__(
@@ -49,11 +55,13 @@ class MarketStructureTracker:
         spike_window_minutes: float = 3.0,
         consolidation_volume_threshold_pct: float = 0.20,
         breakout_buy_volume_multiplier: float = 1.50,
+        min_baseline_demand_usd: float = 100.0,
     ):
         self.min_cooldown_minutes = min_cooldown_minutes
         self.spike_window_minutes = spike_window_minutes
         self.consolidation_volume_threshold_pct = consolidation_volume_threshold_pct
         self.breakout_buy_volume_multiplier = breakout_buy_volume_multiplier
+        self.min_baseline_demand_usd = min_baseline_demand_usd
         self.pools: Dict[str, PoolMarketStructure] = {}
 
     def get_or_create_pool(
@@ -72,6 +80,7 @@ class MarketStructureTracker:
                 graduation_time=grad_ts,
                 spike_peak_price_sol=initial_price_sol,
                 spike_peak_1m_vol_usd=initial_vol_1m_usd,
+                baseline_demand_floor_usd=self.min_baseline_demand_usd,
             )
         return self.pools[pool_address]
 
@@ -114,18 +123,33 @@ class MarketStructureTracker:
         if ms.spike_peak_price_sol <= 0:
             ms.spike_peak_price_sol = current_price_sol * 1.05
 
-        # 2. Consolidation Check: Volume Exhaustion
+        # 2. Consolidation Check: Volume Exhaustion + Baseline Demand Floor
+        # Baseline Demand Floor Gate: If absolute 1m volume drops below floor ($100/min),
+        # retail has abandoned the token; hard reject as dead token.
+        if vol_1m_usd < self.min_baseline_demand_usd:
+            ms.is_dead_token = True
+            ms.dead_token_reason = (
+                f"1m volume ${vol_1m_usd:,.0f}/min < ${self.min_baseline_demand_usd:,.0f}/min floor (dead token / abandoned retail interest)"
+            )
+            ms.consolidation_confirmed = False
+            ms.breakout_confirmed = False
+            logger.warning(
+                "Pool %s REJECTED: Dead token detected. %s",
+                pool_address, ms.dead_token_reason
+            )
+            return ms
+
         exhaustion_threshold = ms.spike_peak_1m_vol_usd * self.consolidation_volume_threshold_pct
         if vol_1m_usd <= exhaustion_threshold:
-            if not ms.consolidation_confirmed:
+            if not ms.consolidation_confirmed and not ms.is_dead_token:
                 ms.consolidation_confirmed = True
                 ms.consolidation_start_time = tick_time
                 logger.info(
-                    "Pool %s CONSOLIDATION CONFIRMED: 1m vol $%.0f < 20%% of peak $%.0f",
-                    pool_address, vol_1m_usd, ms.spike_peak_1m_vol_usd
+                    "Pool %s CONSOLIDATION CONFIRMED: 1m vol $%.0f is healthy consolidation (< 20%% of peak $%.0f and >= $%.0f floor)",
+                    pool_address, vol_1m_usd, ms.spike_peak_1m_vol_usd, self.min_baseline_demand_usd
                 )
 
-        if ms.consolidation_confirmed:
+        if ms.consolidation_confirmed and not ms.is_dead_token:
             if buy_vol_usd > 0:
                 ms.consolidation_buy_volumes.append(buy_vol_usd)
                 # Keep rolling window of last 20 ticks
@@ -160,7 +184,11 @@ class MarketStructureTracker:
         """
         Evaluates Invariant 3:
         1. Minimum 3.0m cooldown (avoids protocol cliff).
-        2. Volume exhaustion consolidation: 1m volume < 20% of peak spike 1m volume.
+        2. Volume exhaustion consolidation + Baseline Demand Floor:
+           - Volume drop < 20% is necessary but not sufficient.
+           - Absolute 1m volume must remain >= $100 USD/min baseline demand floor.
+           - If 1m volume drops below $100/min (e.g. $10/min), it is a dead token (abandoned retail); hard reject.
+           - If it drops to e.g. $150/min and is < 20% of peak, that is healthy consolidation.
         3. Structural breakout: current price >= initial spike resistance price WITH buy volume > 1.5x consolidation average.
         """
         now = current_time or datetime.now(timezone.utc)
@@ -197,6 +225,37 @@ class MarketStructureTracker:
         buys_5m = int(quote.get("buys_5m") or 1)
         buy_ratio = buys_5m / txns_5m
         buy_vol_usd = float(quote.get("buy_volume_1m_usd") or (vol_1m * buy_ratio))
+
+        # Configurable baseline demand floor (default $100.0/min)
+        baseline_floor = float(
+            quote.get("min_baseline_demand_usd")
+            or pool.get("min_baseline_demand_usd")
+            or quote.get("baseline_demand_floor_usd")
+            or pool.get("baseline_demand_floor_usd")
+            or self.min_baseline_demand_usd
+        )
+
+        # 1. Dead Token Check (Prior flag or tracker record)
+        ms = self.pools.get(pool_addr)
+        if (
+            pool.get("is_dead_token", False)
+            or quote.get("is_dead_token", False)
+            or (ms and ms.is_dead_token)
+        ):
+            reason = f": {ms.dead_token_reason}" if (ms and ms.dead_token_reason) else ""
+            return False, f"Baseline Demand Floor Gate: Dead token rejected (volume fell below ${baseline_floor:,.0f}/min floor during consolidation; abandoned retail interest){reason}"
+
+        # 2. Baseline Demand Floor Check on current quote
+        # Volume drop < 20% is necessary but not sufficient.
+        # If absolute 1m volume drops below $100/min (e.g. $10/min), retail has abandoned the token.
+        # Any spike is just an isolated whale sweep, not organic momentum. Hard reject!
+        if vol_1m < baseline_floor:
+            if ms:
+                ms.is_dead_token = True
+                ms.dead_token_reason = f"1m volume ${vol_1m:,.0f}/min < ${baseline_floor:,.0f}/min floor"
+                ms.consolidation_confirmed = False
+                ms.breakout_confirmed = False
+            return False, f"Baseline Demand Floor Gate: 1m volume (${vol_1m:,.0f}/min) < ${baseline_floor:,.0f}/min floor (dead token / abandoned retail interest; hard reject)"
 
         # Check explicit quote / pool parameters if passed directly by testing harness
         if "spike_peak_1m_volume_usd" in pool or "spike_peak_1m_volume_usd" in quote:

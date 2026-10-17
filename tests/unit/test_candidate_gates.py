@@ -339,3 +339,146 @@ def test_enforce_no_repeat_token_trading(tmp_path):
     pos2 = engine.on_market_tick([mock_pool])
     assert pos2 is None
     assert engine.get_active_position() is None
+
+
+def test_gate_5_dead_token_rejected_below_baseline_demand_floor(paper_engine):
+    """
+    Fix 3 (Baseline Demand Floor):
+    When volume drops to < 20% of spike peak, but falls below the $100/min baseline demand floor
+    (e.g., $10/min), retail has abandoned the token.
+    An isolated whale sweeping a few dollars of micro-liquidity must be HARD REJECTED.
+    """
+    pool = {"token_mint": "MintDeadToken", "minutes_post_graduation": 10.0, "current_sol_reserve": 35.0}
+
+    # Case A: Volume drops to $15/min (< 20% of $2,000 peak = $400, but < $100 floor).
+    # Isolated whale sweeps $30 of liquidity above resistance.
+    quote_dead_whale_pump = {
+        "price_sol": 0.000110,                    # Spiked above resistance
+        "liquidity_usd": 6000.0,
+        "quote_sol_reserve": 18.0,
+        "total_txns_5m": 6,
+        "buys_5m": 5,
+        "sells_5m": 1,
+        "price_change_5m": 8.0,
+        "volume_5m_usd": 400.0,                   # 5m volume passes Gate 4 (>= $300)
+        "volume_1m_usd": 15.0,                    # 1m volume = $15/min < $100 floor!
+        "buy_volume_1m_usd": 30.0,
+        "spike_peak_1m_vol": 2000.0,
+        "initial_spike_resistance_price": 0.000100,
+        "consolidation_avg_buy_vol": 10.0,
+        "breakout_confirmed": True,               # Even if flagged, dead token floor MUST override!
+    }
+
+    passed, reason = paper_engine.evaluate_candidate_gates(pool, quote=quote_dead_whale_pump)
+    assert not passed
+    assert "Baseline Demand Floor Gate" in reason
+    assert "dead token" in reason.lower()
+
+    # Case B: Token drops to $10/min
+    quote_dead_10usd = {
+        "price_sol": 0.000105,
+        "liquidity_usd": 6000.0,
+        "quote_sol_reserve": 18.0,
+        "total_txns_5m": 6,
+        "buys_5m": 5,
+        "sells_5m": 1,
+        "price_change_5m": 3.2,
+        "volume_5m_usd": 350.0,                   # 5m passes Gate 4
+        "volume_1m_usd": 10.0,                    # $10/min < $100 floor
+        "spike_peak_1m_vol": 2500.0,
+        "initial_spike_resistance_price": 0.000100,
+    }
+    passed, reason = paper_engine.evaluate_candidate_gates(pool, quote=quote_dead_10usd)
+    assert not passed
+    assert "Baseline Demand Floor Gate" in reason
+
+
+def test_gate_5_healthy_consolidation_above_baseline_demand_floor(paper_engine):
+    """
+    Healthy consolidation: 1m volume drops to $150/min (< 20% of $2,000 peak = $400),
+    AND remains >= $100/min baseline demand floor.
+    Breakout above resistance with buy volume > 1.5x consolidation average passes cleanly.
+    """
+    pool = {"token_mint": "MintHealthyConsol", "minutes_post_graduation": 10.0, "current_sol_reserve": 35.0}
+
+    quote_healthy_breakout = {
+        "price_sol": 0.000105,                    # Above resistance 0.000100
+        "liquidity_usd": 6000.0,
+        "quote_sol_reserve": 18.0,
+        "total_txns_5m": 8,
+        "buys_5m": 6,
+        "sells_5m": 2,
+        "price_change_5m": 4.5,
+        "volume_5m_usd": 750.0,                   # 750 / 5 = 150/min
+        "volume_1m_usd": 150.0,                   # $150/min: < $400 (<20% peak) AND >= $100 floor
+        "buy_volume_1m_usd": 180.0,               # > 1.5 * 100 = 150
+        "spike_peak_1m_vol": 2000.0,
+        "initial_spike_resistance_price": 0.000100,
+        "consolidation_avg_buy_vol": 100.0,
+    }
+
+    passed, reason = paper_engine.evaluate_candidate_gates(pool, quote=quote_healthy_breakout)
+    assert passed
+    assert "Passed All Candidate Gates" in reason
+
+
+def test_market_structure_tracker_record_tick_dead_token_lifecycle():
+    """
+    Verifies MarketStructureTracker tick ingestion correctly marks dead tokens
+    when volume drops below the baseline demand floor, rejecting subsequent whale spikes.
+    """
+    from datetime import datetime, timezone, timedelta
+    from src.engine.market_structure import MarketStructureTracker
+
+    tracker = MarketStructureTracker(min_baseline_demand_usd=100.0)
+    t0 = datetime.now(timezone.utc)
+    pool_addr = "PoolDeadTracker01"
+    mint = "MintDeadTracker01"
+
+    # Tick 1 (Minute 1): Initial spike phase
+    ms = tracker.record_tick(
+        pool_address=pool_addr,
+        token_mint=mint,
+        current_price_sol=0.0010,
+        vol_1m_usd=3000.0,
+        buy_vol_usd=2500.0,
+        tick_time=t0 + timedelta(minutes=1),
+        graduation_time=t0,
+    )
+    assert ms.spike_peak_1m_vol_usd == 3000.0
+    assert not ms.is_dead_token
+
+    # Tick 2 (Minute 4): Volume collapses to $15/min (abandoned retail)
+    ms = tracker.record_tick(
+        pool_address=pool_addr,
+        token_mint=mint,
+        current_price_sol=0.0008,
+        vol_1m_usd=15.0,
+        buy_vol_usd=5.0,
+        tick_time=t0 + timedelta(minutes=4),
+        graduation_time=t0,
+    )
+    assert ms.is_dead_token is True
+    assert ms.consolidation_confirmed is False
+    assert "1m volume $15/min < $100/min floor" in ms.dead_token_reason
+
+    # Tick 3 (Minute 5): Whale sweeps $50 of liquidity, spiking price to 0.0015 (> 0.0010)
+    ms = tracker.record_tick(
+        pool_address=pool_addr,
+        token_mint=mint,
+        current_price_sol=0.0015,
+        vol_1m_usd=50.0,
+        buy_vol_usd=50.0,
+        tick_time=t0 + timedelta(minutes=5),
+        graduation_time=t0,
+    )
+    assert ms.breakout_confirmed is False
+
+    # Evaluation must reject
+    passed, reason = tracker.evaluate_structural_break(
+        pool={"pool_address": pool_addr, "token_mint": mint, "minutes_post_graduation": 5.0},
+        quote={"price_sol": 0.0015, "volume_1m_usd": 50.0},
+    )
+    assert not passed
+    assert "Baseline Demand Floor Gate" in reason
+

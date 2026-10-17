@@ -11,7 +11,7 @@ from typing import Dict, List, Optional
 class PositionState(str, Enum):
     PENDING_ENTRY = "PENDING_ENTRY"
     OPEN = "OPEN"                      # Active, 100% held, TP1 not yet hit
-    RUNNER_ACTIVE = "RUNNER_ACTIVE"    # TP1 executed: 80% sold, 20% free runner active
+    RUNNER_ACTIVE = "RUNNER_ACTIVE"    # TP1 executed: 90% sold, 10% lottery runner active
     RATCHETED = "RATCHETED"            # Kept for backward compatibility
     CLOSED_TRAIL = "CLOSED_TRAIL"      # Closed by trailing stop trigger (structure or peak trail)
     CLOSED_STOP = "CLOSED_STOP"        # Closed by protective stop (-10%)
@@ -19,6 +19,7 @@ class PositionState(str, Enum):
     CLOSED_EMERGENCY = "CLOSED_EMERGENCY"  # Closed by emergency risk ceiling
     CLOSED_TIME_DECAY = "CLOSED_TIME_DECAY"        # Fix 3: Momentum time-decay (2 candles no high + >40% vol drop)
     CLOSED_LIQUIDITY_DRAIN = "CLOSED_LIQUIDITY_DRAIN"  # Fix 3: Liquidity collapse (simulated sell slippage > 5%)
+    CLOSED_RUNNER_TIME_KILL = "CLOSED_RUNNER_TIME_KILL"  # Fix 5: Runner hard time kill (<+30% gross within 3m of TP1)
 
     @property
     def is_closed(self) -> bool:
@@ -29,6 +30,7 @@ class PositionState(str, Enum):
             PositionState.CLOSED_EMERGENCY,
             PositionState.CLOSED_TIME_DECAY,
             PositionState.CLOSED_LIQUIDITY_DRAIN,
+            PositionState.CLOSED_RUNNER_TIME_KILL,
         )
 
 
@@ -60,11 +62,11 @@ class PaperPosition:
     tokens_held: float
     sol_spent: float
     position_notional_usd: float
-    # Friction-Busting Scale-Out (Invariant 2) Parameters:
+    # Friction-Busting 90/10 Scale-Out (Invariant 2) Parameters:
     tp1_target_gross_pct: float = 0.09     # +9.0% gross target (+8% to +10% range)
     tp1_price_sol: float = 0.0             # Entry * (1 + tp1_target_gross_pct)
-    tp1_size_pct: float = 0.80             # 80% sold at TP1 to cover round-trip friction
-    runner_size_pct: float = 0.20          # 20% retained with zero cost-of-capital drag
+    tp1_size_pct: float = 0.90             # 90% sold at TP1 to lock net profit after friction
+    runner_size_pct: float = 0.10          # 10% retained as lottery runner
     runner_tokens_held: float = 0.0        # Remaining tokens held during runner stage
     runner_trailing_pct: float = 0.15      # 15% wide trailing stop on runner
     protective_stop_loss_pct: float = 0.10 # Initial protective stop at -10%
@@ -72,10 +74,20 @@ class PaperPosition:
     current_stop_price_sol: float = 0.0
     state: PositionState = PositionState.OPEN
     tp1_activated: bool = False
+    tp1_time: Optional[datetime] = None    # Timestamp when TP1 executed
     tp1_leg: Optional[ExecutionLeg] = None
     runner_leg: Optional[ExecutionLeg] = None
     tp1_realized_usd: float = 0.0
     runner_realized_usd: float = 0.0
+    # Hard Time Kill on Runner (Fix 5):
+    runner_hard_kill_timeout_minutes: float = 3.0  # Must achieve +30% gross within 3 minutes of TP1
+    runner_target_gross_pct: float = 0.30          # +30% gross target hurdle for runner
+    runner_target_achieved: bool = False
+    # Time-Sliced TP1 (Anti-MEV / Sandwich Defense):
+    tp1_slices_total: int = 3              # Split 90% TP1 tranche into 3 equal sells (30% each)
+    tp1_slices_executed: int = 0           # Count of completed slices
+    tp1_legs: List[ExecutionLeg] = field(default_factory=list) # Slices spaced 2-3 blocks apart
+    tp1_slice_interval_seconds: float = 1.0 # 2-3 blocks (~800ms - 1.2s)
     entry_leg: Optional[ExecutionLeg] = None
     exit_leg: Optional[ExecutionLeg] = None
     exit_time: Optional[datetime] = None

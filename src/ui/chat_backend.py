@@ -55,8 +55,8 @@ class TelemetryChatBackend:
                 f"### 📊 Friction & Fee Analysis\n\n"
                 f"- **Average Round-Trip Friction:** `{avg_f:.2f}%` of notional\n"
                 f"- **Friction Gate Pass Rate (≤7.0%):** `{pass_rate:.1f}%`\n"
-                f"- **Exit Architecture:** **Friction-Busting Scale-Out (Modified Path B)**\n"
-                f"- **Execution Legs:** TP1 sells 80% at +8%–+10% gross (pays full friction); remaining 20% free runner trails by 15%.\n\n"
+                f"- **Exit Architecture:** **Friction-Busting 90/10 Scale-Out (Fix 5)**\n"
+                f"- **Execution Legs:** TP1 sells 90% at +8%–+10% gross (locks net profit after friction); remaining 10% lottery runner has a Hard Time Kill (market dumped if not >= +30% in 3m).\n\n"
                 f"Path A+ (100% single ratchet) is prohibited for positions < $50 to prevent friction death spirals."
             )
             suggestions = [
