@@ -17,6 +17,24 @@ This directory contains the structured tasks, ideas, and system components captu
 
 ---
 
+## Solana-Specific Competitive Enhancements & Advanced Defense Backlog (Todos 20–30)
+
+| ID | Title | Area | Priority | Status | Tags |
+|---|---|---|:---:|:---:|---|
+| [todo-20](file:///c:/Users/sivab/Documents/products/funbot/.planning/todos/20-lifecycle-simulation-honeypot-detection.md) | **Lifecycle Simulation & Honeypot Detection (Check 13)** | `engine` | CRITICAL | `PENDING` | `simulation`, `honeypot`, `entry-gate`, `checks`, `execution` |
+| [todo-21](file:///c:/Users/sivab/Documents/products/funbot/.planning/todos/21-token2022-threat-checks-extensions.md) | **Token-2022 Threat Checks & Extension Audit (Check 14)** | `security` | CRITICAL | `PENDING` | `token2022`, `transfer-fee`, `security`, `extensions`, `entry-gate` |
+| [todo-22](file:///c:/Users/sivab/Documents/products/funbot/.planning/todos/22-program-upgradeability-check-bpf.md) | **Program Upgradeability Check (Check 15)** | `security` | HIGH | `PENDING` | `security`, `bpf`, `upgradeability`, `immutability`, `entry-gate` |
+| [todo-23](file:///c:/Users/sivab/Documents/products/funbot/.planning/todos/23-cpi-dependency-audit-whitelist.md) | **CPI Dependency Audit & Program Whitelisting (Check 16)** | `security` | HIGH | `PENDING` | `security`, `cpi`, `bpf`, `bytecode`, `whitelist`, `entry-gate` |
+| [todo-24](file:///c:/Users/sivab/Documents/products/funbot/.planning/todos/24-prebuilt-emergency-exit-cache.md) | **Pre-Built Emergency Exit Cache for Zero-Delay Rug Response** | `live` | HIGH | `PENDING` | `live`, `emergency-exit`, `cache`, `rug-response`, `zero-delay` |
+| [todo-25](file:///c:/Users/sivab/Documents/products/funbot/.planning/todos/25-authority-change-realtime-monitor.md) | **Authority Change Real-Time WebSocket Monitor** | `telemetry` | HIGH | `PENDING` | `telemetry`, `websocket`, `authority`, `rug-pull`, `emergency-exit` |
+| [todo-26](file:///c:/Users/sivab/Documents/products/funbot/.planning/todos/26-slot-skip-network-instability-monitor.md) | **Slot Skip & Network Instability Guard** | `telemetry` | MEDIUM | `PENDING` | `telemetry`, `slots`, `solana`, `network-stability`, `circuit-breaker` |
+| [todo-27](file:///c:/Users/sivab/Documents/products/funbot/.planning/todos/27-rent-exempt-balance-verification.md) | **Rent-Exempt Balance Verification for Pool & Token Accounts** | `security` | MEDIUM | `PENDING` | `solana`, `rent-exempt`, `balance`, `security`, `entry-gate` |
+| [todo-28](file:///c:/Users/sivab/Documents/products/funbot/.planning/todos/28-compute-budget-exhaustion-defense.md) | **Compute Budget Exhaustion Defense & Dynamic CU Optimization** | `execution` | MEDIUM | `PENDING` | `compute-budget`, `simulation`, `execution`, `solana`, `optimization` |
+| [todo-29](file:///c:/Users/sivab/Documents/products/funbot/.planning/todos/29-close-account-attack-detection.md) | **Close Account Attack Detection for AMM Pools** | `security` | MEDIUM | `PENDING` | `security`, `close-account`, `pool-authority`, `entry-gate` |
+| [todo-30](file:///c:/Users/sivab/Documents/products/funbot/.planning/todos/30-solana-threat-model-evm-bias-report.md) | **Solana Threat Model vs EVM Bias Documentation** | `docs` | LOW | `PENDING` | `docs`, `threat-model`, `solana`, `evm`, `architecture`, `report` |
+
+---
+
 ## Completed Milestone 2 Backlog (Phases 6–9)
 
 | ID | Title | Area | Priority | Status | Tags |

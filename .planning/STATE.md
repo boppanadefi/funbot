@@ -30,6 +30,7 @@
 - **Orchestration Runtime:** 3-tier priority async scheduler, SQLite WAL state persistence (`data/telemetry/orchestrator_state.db`), and Discord/Telegram alerting.
 - **Streamlit Terminal:** Running live on `http://localhost:8501` with real-time telemetry, paper ledger, 28-day scorecard, and RPC badges.
 - **Python Runtime:** Python 3.14 via `.venv`.
+- **Competitive Enhancements Backlog:** Captured 11 Solana-specific security and execution enhancements ([todo-20 through todo-30](file:///c:/Users/sivab/Documents/products/funbot/.planning/todos/INDEX.md)) expanding checks from 12 to 16, adding pre-built emergency exits, real-time authority monitoring, slot skip protection, and lifecycle simulation.
 
 ---
 
