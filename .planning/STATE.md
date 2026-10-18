@@ -15,7 +15,7 @@
 | Phase | Description | Status | Blockers / Dependencies |
 | :--- | :--- | :---: | :--- |
 | **Phase 10** | **Mainnet Micro-Capital Deployment & Dry-Run** | **COMPLETED & VERIFIED** (13/13 tests pass) | None |
-| **Phase 11** | **Real-Time Telemetry & Operator Webhooks** | **READY FOR PLANNING** | Phase 10 |
+| **Phase 11** | **Real-Time Telemetry & Operator Webhooks** | **PLANNED / READY FOR EXECUTION** | Phase 10 |
 | **Phase 12** | **Production Supervisor & Daemon Management** | PENDING | Phase 11 |
 | **Phase 13** | **Live Execution Walk-Forward & Performance Ledger** | PENDING | Phase 12 |
 
@@ -41,7 +41,7 @@
 ---
 
 ## Next Action in GSD Workflow
-Phase 10 is completed. Ready to plan Phase 11 via:
+Phase 11 is planned and ready for execution via:
 ```bash
-/gsd-plan-phase 11
+/gsd-execute-phase 11
 ```
