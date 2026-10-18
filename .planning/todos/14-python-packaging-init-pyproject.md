@@ -2,7 +2,7 @@
 id: todo-14-python-packaging-init-pyproject
 title: Python packaging, missing __init__.py files & pyproject.toml
 area: infrastructure
-status: pending
+status: completed
 created: 2026-10-18
 priority: high
 tags: [packaging, pyproject, init, dependencies]

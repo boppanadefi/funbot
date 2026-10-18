@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "funbot"
+version = "4.0.0"
+description = "Funbot Systematic Solana Post-Graduation Momentum Trading Engine"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [
+    { name = "Funbot Quant Team" }
+]
+dependencies = [
+    "requests>=2.31.0",
+    "websockets>=12.0",
+    "streamlit>=1.32.0",
+    "plotly>=5.19.0",
+    "pandas>=2.2.0",
+    "pyarrow>=15.0.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "anyio>=4.0.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "hypothesis>=6.100.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.4.0",
+    "mypy>=1.9.0",
+    "structlog>=24.1.0"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+asyncio_mode = "strict"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"

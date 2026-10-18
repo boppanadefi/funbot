@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  # --- Service 1: Funbot Async Orchestrator Daemon ---
+  daemon:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["daemon"]
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config:ro
+
+  # --- Service 2: Funbot Streamlit Operational Terminal ---
+  terminal:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["terminal", "--port", "8501"]
+    ports:
+      - "8501:8501"
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config:ro

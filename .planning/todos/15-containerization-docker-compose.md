@@ -2,7 +2,7 @@
 id: todo-15-containerization-docker-compose
 title: Containerization, Dockerfile & docker-compose setup
 area: devops
-status: pending
+status: completed
 created: 2026-10-18
 priority: medium
 tags: [docker, container, compose, deployment, env]

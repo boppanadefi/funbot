@@ -23,12 +23,19 @@ from src.engine.stress_injection import StressInjectionProtocol
 from src.engine.trade_accelerator import TradeAcceleratorConfig
 from src.engine.virtual_amm import VirtualAMMMirror
 from src.live.circuit_breaker import DailyCircuitBreaker
+from src.live.kill_switch import EmergencyKillSwitch
 
 
 @pytest.fixture
 def clean_circuit_breaker(tmp_path):
     state_file = tmp_path / "cb_state.json"
     return DailyCircuitBreaker(state_file_path=str(state_file))
+
+
+@pytest.fixture
+def clean_kill_switch(tmp_path):
+    ks_file = tmp_path / "ks_state.json"
+    return EmergencyKillSwitch(state_file_path=str(ks_file))
 
 
 @pytest.fixture
@@ -49,12 +56,13 @@ class TestTradeAcceleratorConfiguration:
         assert config.relaxed_min_dynamic_size_usd == 2.00
         assert config.session_regime_tag == "REGIME_TEST"
 
-    def test_live_paper_trader_concurrency_override(self, tmp_path, clean_circuit_breaker):
+    def test_live_paper_trader_concurrency_override(self, tmp_path, clean_circuit_breaker, clean_kill_switch):
         state_file = tmp_path / "active_pos.json"
         accelerator = TradeAcceleratorConfig(enabled=True, concurrency_limit=3)
         engine = LivePaperTradingEngine(
             db_path=str(tmp_path / "test_engine.db"),
             circuit_breaker=clean_circuit_breaker,
+            kill_switch=clean_kill_switch,
             state_file=str(state_file),
             accelerator_config=accelerator,
         )

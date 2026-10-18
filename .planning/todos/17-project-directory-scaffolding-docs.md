@@ -2,7 +2,7 @@
 id: todo-17-project-directory-scaffolding-docs
 title: Directory scaffolding, documentation & test structure
 area: infrastructure
-status: pending
+status: completed
 created: 2026-10-18
 priority: medium
 tags: [directories, scaffolding, docs, integration-tests]

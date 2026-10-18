@@ -8,10 +8,10 @@ This directory contains the structured tasks, ideas, and system components captu
 
 | ID | Title | Area | Priority | Status | Tags |
 |---|---|---|:---:|:---:|---|
-| [todo-14](file:///c:/Users/sivab/Documents/products/funbot/.planning/todos/14-python-packaging-init-pyproject.md) | **Python packaging, missing `__init__.py` files & `pyproject.toml`** | `infrastructure` | HIGH | `PENDING` | `packaging`, `pyproject`, `init`, `dependencies` |
-| [todo-15](file:///c:/Users/sivab/Documents/products/funbot/.planning/todos/15-containerization-docker-compose.md) | **Containerization, Dockerfile & docker-compose setup** | `devops` | MEDIUM | `PENDING` | `docker`, `compose`, `deployment`, `env` |
-| [todo-16](file:///c:/Users/sivab/Documents/products/funbot/.planning/todos/16-root-cli-entry-point.md) | **Unified root CLI entry point (`main.py` / `__main__.py`)** | `core` | HIGH | `PENDING` | `cli`, `entrypoint`, `main`, `runner`, `daemon` |
-| [todo-17](file:///c:/Users/sivab/Documents/products/funbot/.planning/todos/17-project-directory-scaffolding-docs.md) | **Directory scaffolding, documentation & test structure** | `infrastructure` | MEDIUM | `PENDING` | `directories`, `scaffolding`, `docs`, `fixtures` |
+| [todo-14](file:///c:/Users/sivab/Documents/products/funbot/.planning/todos/14-python-packaging-init-pyproject.md) | **Python packaging, missing `__init__.py` files & `pyproject.toml`** | `infrastructure` | HIGH | `COMPLETED` | `packaging`, `pyproject`, `init`, `dependencies` |
+| [todo-15](file:///c:/Users/sivab/Documents/products/funbot/.planning/todos/15-containerization-docker-compose.md) | **Containerization, Dockerfile & docker-compose setup** | `devops` | MEDIUM | `COMPLETED` | `docker`, `compose`, `deployment`, `env` |
+| [todo-16](file:///c:/Users/sivab/Documents/products/funbot/.planning/todos/16-root-cli-entry-point.md) | **Unified root CLI entry point (`main.py` / `__main__.py`)** | `core` | HIGH | `COMPLETED` | `cli`, `entrypoint`, `main`, `runner`, `daemon` |
+| [todo-17](file:///c:/Users/sivab/Documents/products/funbot/.planning/todos/17-project-directory-scaffolding-docs.md) | **Directory scaffolding, documentation & test structure** | `infrastructure` | MEDIUM | `COMPLETED` | `directories`, `scaffolding`, `docs`, `fixtures` |
 | [todo-18](file:///c:/Users/sivab/Documents/products/funbot/.planning/todos/18-property-based-testing-hypothesis.md) | **Property-based testing for AMM constant-product math** | `testing` | MEDIUM | `PENDING` | `testing`, `property-based`, `hypothesis`, `amm` |
 | [todo-19](file:///c:/Users/sivab/Documents/products/funbot/.planning/todos/19-production-observability-metrics.md) | **Structured logging & Prometheus metrics integration** | `telemetry` | MEDIUM | `PENDING` | `telemetry`, `observability`, `logging`, `metrics` |
 

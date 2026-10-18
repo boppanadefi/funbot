@@ -2,7 +2,7 @@
 id: todo-16-root-cli-entry-point
 title: Unified root CLI entry point (main.py / __main__.py)
 area: core
-status: pending
+status: completed
 created: 2026-10-18
 priority: high
 tags: [cli, entrypoint, main, runner, daemon]

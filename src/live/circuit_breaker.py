@@ -176,3 +176,13 @@ class DailyCircuitBreaker:
         state = self._read()
         state["remaining_budget_usd"] = self.get_remaining_budget()
         return state
+
+    @property
+    def is_halted(self) -> bool:
+        """Returns whether circuit breaker is currently tripped."""
+        return bool(self._read().get("is_halted", False))
+
+    @property
+    def net_daily_pnl(self) -> float:
+        """Returns net realized daily PnL in USD."""
+        return float(self._read().get("net_daily_pnl_usd", 0.0))
