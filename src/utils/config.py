@@ -4,9 +4,30 @@ Ensures all 7 Invariant System Mitigations are strictly enforced at runtime.
 """
 
 from dataclasses import dataclass, field
+import os
 from pathlib import Path
 from typing import Dict, List, Optional
 import yaml
+
+
+def _load_dotenv() -> None:
+    for candidate in [Path.cwd() / ".env", Path(__file__).resolve().parent.parent.parent / ".env"]:
+        if candidate.is_file():
+            try:
+                with open(candidate, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            k, v = line.split("=", 1)
+                            k, v = k.strip(), v.strip().strip("'\"")
+                            if k not in os.environ:
+                                os.environ[k] = v
+            except Exception:
+                pass
+            break
+
+
+_load_dotenv()
 
 
 class InvariantViolationError(ValueError):
@@ -297,10 +318,21 @@ class ConfigLoader:
         gate = data["falsification_gate"]
         storage = data["storage"]
 
+        http_rpc_url = (
+            os.getenv("HELIUS_HTTP_URL")
+            or os.getenv("SOLANA_RPC_URL")
+            or net["http_rpc_url"]
+        )
+        ws_rpc_url = (
+            os.getenv("HELIUS_WSS_URL")
+            or os.getenv("SOLANA_WSS_URL")
+            or net["ws_rpc_url"]
+        )
+
         return TelemetryConfig(
             cluster=net["cluster"],
-            http_rpc_url=net["http_rpc_url"],
-            ws_rpc_url=net["ws_rpc_url"],
+            http_rpc_url=http_rpc_url,
+            ws_rpc_url=ws_rpc_url,
             pumpswap_program_id=net["pumpswap_program_id"],
             rolling_windows_seconds=[int(x) for x in sampling["rolling_windows_seconds"]],
             heartbeat_interval_seconds=float(sampling["heartbeat_interval_seconds"]),

@@ -236,6 +236,13 @@ class LocalStructureExitEngine:
                 est_slippage_pct = float(quote["estimated_slippage_pct"])
             elif quote and "price_impact_pct" in quote:
                 est_slippage_pct = float(quote["price_impact_pct"])
+            elif quote and float(quote.get("liquidity_usd", 9999.0) or 0.0) < 500.0:
+                # Liquidity drained or rug-pulled on live AMM curve
+                est_slippage_pct = 99.9
+            elif quote and float(quote.get("quote_sol_reserve", 0.0) or 0.0) > 0:
+                q_sol = float(quote["quote_sol_reserve"])
+                remaining_sol = (remaining_tokens * current_price_sol) if current_price_sol > 0 else 0.10
+                est_slippage_pct = (remaining_sol / (2.0 * q_sol)) * 100.0
             elif current_token_reserve and current_token_reserve > 0 and remaining_tokens > 0:
                 est_slippage_pct = (remaining_tokens / (current_token_reserve + remaining_tokens)) * 100.0
 

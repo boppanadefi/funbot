@@ -15,6 +15,7 @@ from src.engine.models import (
 from src.engine.paper_ledger import PaperLedger
 from src.cost.fee_tiers import FeeTierLookup
 from src.cost.jito_tips import JitoTipModel
+from src.engine.execution_simulator import FrictionExecutionSimulator
 from src.engine.structure_exits import (
     LocalStructureExitEngine,
     Candle1M,
@@ -46,12 +47,16 @@ class PathASimulator:
         self,
         ledger: Optional[PaperLedger] = None,
         sol_price_usd: float = 155.0,
+        execution_simulator: Optional[FrictionExecutionSimulator] = None,
+        enable_friction_engine: bool = False,
     ):
         self.ledger = ledger or PaperLedger()
         self.sol_price_usd = sol_price_usd
         self.fee_lookup = FeeTierLookup()
         self.tip_model = JitoTipModel(sol_price_usd)
         self.structure_exit_engine = LocalStructureExitEngine()
+        self.enable_friction_engine = enable_friction_engine
+        self.execution_simulator = execution_simulator
 
     def open_position(
         self,
@@ -74,24 +79,37 @@ class PathASimulator:
         """
         now = entry_time or datetime.now(timezone.utc)
         sol_spent = position_notional_usd / self.sol_price_usd
-        tokens_held = sol_spent / entry_price_sol if entry_price_sol > 0 else 0.0
 
-        # Calculate entry fees
-        tier = self.fee_lookup.get_tier(market_cap_sol)
-        venue_fee_sol = sol_spent * (tier.total_fee_pct / 100.0)
-        overhead = self.tip_model.calculate_entry_overhead(position_notional_usd)
-
-        entry_leg = ExecutionLeg(
-            leg_type="ENTRY",
-            timestamp=now,
-            price_sol=entry_price_sol,
-            sol_amount=sol_spent,
-            token_amount=tokens_held,
-            venue_fee_sol=venue_fee_sol,
-            jito_tip_sol=overhead.jito_tip_sol,
-            priority_fee_sol=overhead.priority_fee_sol,
-            base_fee_sol=overhead.base_tx_fee_sol,
-        )
+        if self.enable_friction_engine and self.execution_simulator:
+            exec_res = self.execution_simulator.simulate_buy(
+                pool_address=pool_address,
+                token_mint=token_mint,
+                sol_amount=sol_spent,
+                trigger_time=now,
+                reference_price_sol=entry_price_sol,
+            )
+            entry_leg = exec_res.to_execution_leg()
+            resolved_entry_price = exec_res.fill_price_sol
+            tokens_held = exec_res.token_amount
+            entry_time_resolved = exec_res.fill_time
+        else:
+            tokens_held = sol_spent / entry_price_sol if entry_price_sol > 0 else 0.0
+            tier = self.fee_lookup.get_tier(market_cap_sol)
+            venue_fee_sol = sol_spent * (tier.total_fee_pct / 100.0)
+            overhead = self.tip_model.calculate_entry_overhead(position_notional_usd)
+            entry_leg = ExecutionLeg(
+                leg_type="ENTRY",
+                timestamp=now,
+                price_sol=entry_price_sol,
+                sol_amount=sol_spent,
+                token_amount=tokens_held,
+                venue_fee_sol=venue_fee_sol,
+                jito_tip_sol=overhead.jito_tip_sol,
+                priority_fee_sol=overhead.priority_fee_sol,
+                base_fee_sol=overhead.base_tx_fee_sol,
+            )
+            resolved_entry_price = entry_price_sol
+            entry_time_resolved = now
 
         # Determine TP1 target gross percentage (+8% to +10%, default +9%)
         if tp1_target_gross_pct is not None:
@@ -113,8 +131,8 @@ class PathASimulator:
         else:
             resolved_tp1_target = self.DEFAULT_TP1_TARGET_GROSS_PCT
 
-        tp1_price_sol = entry_price_sol * (1.0 + resolved_tp1_target)
-        initial_stop_price = entry_price_sol * (1.0 - self.PROTECTIVE_STOP_LOSS_PCT)
+        tp1_price_sol = resolved_entry_price * (1.0 + resolved_tp1_target)
+        initial_stop_price = resolved_entry_price * (1.0 - self.PROTECTIVE_STOP_LOSS_PCT)
         runner_tokens = tokens_held * self.DEFAULT_RUNNER_SIZE_PCT
 
         pos = PaperPosition(
@@ -122,8 +140,8 @@ class PathASimulator:
             pool_address=pool_address,
             token_mint=token_mint,
             regime=regime,
-            entry_time=now,
-            entry_price_sol=entry_price_sol,
+            entry_time=entry_time_resolved,
+            entry_price_sol=resolved_entry_price,
             tokens_held=tokens_held,
             sol_spent=sol_spent,
             position_notional_usd=position_notional_usd,
@@ -134,7 +152,7 @@ class PathASimulator:
             runner_tokens_held=runner_tokens,
             runner_trailing_pct=trailing_pct or self.DEFAULT_RUNNER_TRAILING_PCT,
             protective_stop_loss_pct=self.PROTECTIVE_STOP_LOSS_PCT,
-            peak_price_sol=entry_price_sol,
+            peak_price_sol=resolved_entry_price,
             current_stop_price_sol=initial_stop_price,
             state=PositionState.OPEN,
             tp1_activated=False,
@@ -144,6 +162,8 @@ class PathASimulator:
             entry_leg=entry_leg,
             entry_breakout_volume_usd=entry_breakout_volume_usd,
             trailing_mode=trailing_mode,
+            signal_ts=now,
+            entry_sim_ts=entry_time_resolved,
             # Backward compatibility attributes
             ratchet_trigger_price_sol=tp1_price_sol,
             ratchet_floor_price_sol=entry_price_sol * 1.01,
@@ -304,30 +324,45 @@ class PathASimulator:
             slice_offset_sec = slice_idx * self.TP1_SLICE_INTERVAL_SECONDS
             slice_timestamp = tick_time + timedelta(seconds=slice_offset_sec)
 
-            # Slicing into 30% chunks confines per-slice AMM curve impact to ~0.20%,
-            # allowing organic retail flow to absorb between blocks, preserving ~+9% target.
-            slice_price_sol = current_price_sol * (1.0 - (slice_idx * 0.0015))
-            slice_gross_sol = slice_tokens * slice_price_sol
+            if self.enable_friction_engine and self.execution_simulator:
+                slice_res = self.execution_simulator.simulate_tp1_slice(
+                    pool_address=pos.pool_address,
+                    token_mint=pos.token_mint,
+                    slice_tokens=slice_tokens,
+                    slice_index=slice_idx,
+                    trigger_time=slice_timestamp,
+                    reference_price_sol=current_price_sol,
+                )
+                slice_leg = slice_res.to_execution_leg()
+                slice_gross_sol = slice_res.sol_amount
+                slice_venue_fee_sol = slice_res.venue_fee_sol
+                slice_tokens_sold = slice_res.token_amount
+            else:
+                # Slicing into 30% chunks confines per-slice AMM curve impact to ~0.20%,
+                # allowing organic retail flow to absorb between blocks, preserving ~+9% target.
+                slice_price_sol = current_price_sol * (1.0 - (slice_idx * 0.0015))
+                slice_gross_sol = slice_tokens * slice_price_sol
 
-            mc_approx = slice_price_sol * 1_000_000_000.0
-            tier = self.fee_lookup.get_tier(mc_approx)
-            slice_venue_fee_sol = slice_gross_sol * (tier.total_fee_pct / 100.0)
+                mc_approx = slice_price_sol * 1_000_000_000.0
+                tier = self.fee_lookup.get_tier(mc_approx)
+                slice_venue_fee_sol = slice_gross_sol * (tier.total_fee_pct / 100.0)
 
-            slice_leg = ExecutionLeg(
-                leg_type=f"TP1_SLICE_{slice_idx + 1}",
-                timestamp=slice_timestamp,
-                price_sol=slice_price_sol,
-                sol_amount=slice_gross_sol,
-                token_amount=slice_tokens,
-                venue_fee_sol=slice_venue_fee_sol,
-                jito_tip_sol=slice_jito_tip_sol,
-                priority_fee_sol=slice_priority_fee_sol,
-                base_fee_sol=slice_base_fee_sol,
-            )
+                slice_leg = ExecutionLeg(
+                    leg_type=f"TP1_SLICE_{slice_idx + 1}",
+                    timestamp=slice_timestamp,
+                    price_sol=slice_price_sol,
+                    sol_amount=slice_gross_sol,
+                    token_amount=slice_tokens,
+                    venue_fee_sol=slice_venue_fee_sol,
+                    jito_tip_sol=slice_jito_tip_sol,
+                    priority_fee_sol=slice_priority_fee_sol,
+                    base_fee_sol=slice_base_fee_sol,
+                )
+                slice_tokens_sold = slice_tokens
+
             pos.tp1_legs.append(slice_leg)
-
             total_gross_sol += slice_gross_sol
-            total_tokens_sold += slice_tokens
+            total_tokens_sold += slice_tokens_sold
             total_venue_fee_sol += slice_venue_fee_sol
 
         total_jito_tip_sol = overall_overhead.jito_tip_sol
@@ -386,24 +421,36 @@ class PathASimulator:
             notional_usd = pos.position_notional_usd
             leg_type = "EXIT"
 
-        gross_sol_received = tokens_to_sell * exit_price_sol
-        mc_approx = exit_price_sol * 1_000_000_000.0
+        if self.enable_friction_engine and self.execution_simulator:
+            exit_res = self.execution_simulator.simulate_exit(
+                pool_address=pos.pool_address,
+                token_mint=pos.token_mint,
+                tokens_to_sell=tokens_to_sell,
+                trigger_time=exit_time,
+                reference_price_sol=exit_price_sol,
+                leg_type=leg_type,
+            )
+            exit_leg = exit_res.to_execution_leg()
+            gross_sol_received = exit_res.sol_amount
+        else:
+            gross_sol_received = tokens_to_sell * exit_price_sol
+            mc_approx = exit_price_sol * 1_000_000_000.0
 
-        tier = self.fee_lookup.get_tier(mc_approx)
-        venue_fee_sol = gross_sol_received * (tier.total_fee_pct / 100.0)
-        overhead = self.tip_model.calculate_exit_overhead(notional_usd, is_emergency=False)
+            tier = self.fee_lookup.get_tier(mc_approx)
+            venue_fee_sol = gross_sol_received * (tier.total_fee_pct / 100.0)
+            overhead = self.tip_model.calculate_exit_overhead(notional_usd, is_emergency=False)
 
-        exit_leg = ExecutionLeg(
-            leg_type=leg_type,
-            timestamp=exit_time,
-            price_sol=exit_price_sol,
-            sol_amount=gross_sol_received,
-            token_amount=tokens_to_sell,
-            venue_fee_sol=venue_fee_sol,
-            jito_tip_sol=overhead.jito_tip_sol,
-            priority_fee_sol=overhead.priority_fee_sol,
-            base_fee_sol=overhead.base_tx_fee_sol,
-        )
+            exit_leg = ExecutionLeg(
+                leg_type=leg_type,
+                timestamp=exit_time,
+                price_sol=exit_price_sol,
+                sol_amount=gross_sol_received,
+                token_amount=tokens_to_sell,
+                venue_fee_sol=venue_fee_sol,
+                jito_tip_sol=overhead.jito_tip_sol,
+                priority_fee_sol=overhead.priority_fee_sol,
+                base_fee_sol=overhead.base_tx_fee_sol,
+            )
 
         if pos.tp1_activated:
             pos.runner_leg = exit_leg

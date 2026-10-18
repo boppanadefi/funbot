@@ -125,6 +125,7 @@ class OrderFlowDynamicsEngine:
         delta_unique_buyers_5blocks: Optional[int] = None,
         breakout_taker_buy_pct: Optional[float] = None,
         now: Optional[datetime] = None,
+        min_vuw_ratio: Optional[float] = None,
     ) -> OrderFlowMetrics:
         """
         Evaluates real-time slot-level order flow dynamics:
@@ -291,8 +292,7 @@ class OrderFlowDynamicsEngine:
 
         classification = "ORGANIC_RETAIL"
 
-        # Rule 1: Slot-Level Delta Unique Buyers (last 5 blocks) >= 1
-        # Replaces 1m VUW with 5-block delta to defeat syndicates spoofing 1m windows in block N
+        required_vuw = min_vuw_ratio if min_vuw_ratio is not None else self.min_vuw_ratio
         if delta_5blocks is not None and (delta_unique_buyers_5blocks is not None or cur_buyers == 0):
             if delta_5blocks < self.min_delta_unique_buyers_5blocks:
                 rejection_reasons.append(
@@ -301,11 +301,11 @@ class OrderFlowDynamicsEngine:
                     f"(no real-time buyer acceleration; flat wash trading rotation or syndicate spoof)"
                 )
                 classification = "WASH_TRADING_SYBIL"
-        elif delta_5blocks < self.min_delta_unique_buyers_5blocks or vuw < self.min_vuw_ratio:
+        elif delta_5blocks < self.min_delta_unique_buyers_5blocks or vuw < required_vuw:
             rejection_reasons.append(
                 f"VUW Rejected (Slot-Level Delta Unique Buyers Gate): "
                 f"Delta unique buyers over last 5 blocks ({delta_5blocks}) < {self.min_delta_unique_buyers_5blocks} floor "
-                f"or VUW {vuw:.2f} < {self.min_vuw_ratio:.2f} floor "
+                f"or VUW {vuw:.2f} < {required_vuw:.2f} floor "
                 f"({cur_buyers} current / {pri_buyers} prior; flat wash trading rotation or syndicate spoof)"
             )
             classification = "WASH_TRADING_SYBIL"

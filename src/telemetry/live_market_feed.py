@@ -69,6 +69,10 @@ class LiveMarketFeed:
             try:
                 if pair.get("chainId") != "solana":
                     continue
+                dex_id = (pair.get("dexId") or "").lower()
+                # Exclude ungraduated bonding curves (pumpfun)
+                if dex_id == "pumpfun":
+                    continue
                 pool_address = pair.get("pairAddress")
                 base_token = pair.get("baseToken", {})
                 token_mint = base_token.get("address")
@@ -87,7 +91,10 @@ class LiveMarketFeed:
                 price_sol = float(pair.get("priceNative", 0.0) or 0.0)
                 price_usd = float(pair.get("priceUsd", 0.0) or 0.0)
                 liq_usd = float(pair.get("liquidity", {}).get("usd", 0.0) or 0.0)
-                sol_reserve = max(5.0, liq_usd / self.sol_price_usd)
+                if liq_usd < 1000.0:
+                    continue
+                # AMM quote reserve (50% of total pool liquidity USD converted to SOL)
+                sol_reserve = (liq_usd / self.sol_price_usd) / 2.0
                 fdv_usd = float(pair.get("fdv", 0.0) or 0.0)
                 mc_sol = (fdv_usd / self.sol_price_usd) if fdv_usd > 0 else (sol_reserve * 4.0)
 
@@ -236,13 +243,18 @@ class LiveMarketFeed:
         if not raw or "pairs" not in raw:
             return None
 
-        pairs = [p for p in (raw.get("pairs") or []) if p and p.get("chainId") == "solana"]
+        pairs = [
+            p for p in (raw.get("pairs") or [])
+            if p and p.get("chainId") == "solana" and (p.get("dexId") or "").lower() != "pumpfun"
+        ]
         if not pairs:
             return None
 
-        # Filter for pairs with verified liquidity > $500
+        # Filter strictly for pairs with verified liquidity > $500 (reject $0/drained pools)
         liquid_pairs = [p for p in pairs if float(p.get("liquidity", {}).get("usd", 0.0) or 0.0) > 500.0]
-        candidate_pairs = liquid_pairs if liquid_pairs else pairs
+        if not liquid_pairs:
+            return None
+        candidate_pairs = liquid_pairs
 
         # Select pair with highest liquidity
         best_pair = max(candidate_pairs, key=lambda p: float(p.get("liquidity", {}).get("usd", 0.0) or 0.0))

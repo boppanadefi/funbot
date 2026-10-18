@@ -14,6 +14,9 @@ from typing import Dict, List, Optional, Tuple
 from src.live.circuit_breaker import DailyCircuitBreaker, DailyLossExceededError, InsufficientRiskCapacityError
 from src.live.jito_bundle_builder import JitoBundleBuilder, AtomicJitoBundle
 from src.live.kill_switch import EmergencyKillSwitch, KillSwitchActiveError
+from src.live.wallet_manager import WalletManager
+from src.live.transaction_signer import SolanaTransactionSigner
+from src.live.jito_dispatcher import JitoTransactionDispatcher
 
 logger = logging.getLogger("ExecutionBridge")
 
@@ -51,12 +54,18 @@ class ExecutionBridge:
         kill_switch: Optional[EmergencyKillSwitch] = None,
         circuit_breaker: Optional[DailyCircuitBreaker] = None,
         bundle_builder: Optional[JitoBundleBuilder] = None,
+        wallet_manager: Optional[WalletManager] = None,
+        signer: Optional[SolanaTransactionSigner] = None,
+        dispatcher: Optional[JitoTransactionDispatcher] = None,
         sol_price_usd: float = 155.0,
         state_file: str = "data/live/staged_orders.json",
     ):
         self.kill_switch = kill_switch or EmergencyKillSwitch()
         self.circuit_breaker = circuit_breaker or DailyCircuitBreaker()
         self.bundle_builder = bundle_builder or JitoBundleBuilder(sol_price_usd=sol_price_usd)
+        self.wallet_manager = wallet_manager or WalletManager(sol_price_usd=sol_price_usd)
+        self.signer = signer or SolanaTransactionSigner(wallet_manager=self.wallet_manager)
+        self.dispatcher = dispatcher or JitoTransactionDispatcher()
         self.sol_price_usd = sol_price_usd
         self.state_file = Path(state_file)
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
@@ -190,17 +199,31 @@ class ExecutionBridge:
         if order.status != "PENDING_OPERATOR":
             return False, f"Order {order_id} is in status '{order.status}', cannot approve.", {}
 
+        # Sign and dispatch bundle through cryptographic signer & Jito engine
+        signed_bundle = None
+        dispatch_receipt = None
+        if order.bundle:
+            try:
+                signed_bundle = self.signer.sign_atomic_jito_bundle(order.bundle)
+                dispatch_receipt = self.dispatcher.dispatch_signed_bundle(signed_bundle)
+            except Exception as e:
+                logger.error("Error signing/dispatching bundle for %s: %s", order_id, e)
+
         now = datetime.now(timezone.utc).isoformat()
         order.status = "EXECUTED"
         order.approved_by = operator_id
         order.executed_at = now
         self._save_staged_orders()
 
+        signatures = dispatch_receipt.transaction_signatures if dispatch_receipt else []
         execution_receipt = {
             "order_id": order_id,
-            "status": "LANDED_CONFIRMED",
-            "execution_mode": "SANDBOX_SIMULATION_BRIDGE",
+            "status": "LANDED_CONFIRMED" if (dispatch_receipt and dispatch_receipt.success) else "EXECUTED",
+            "execution_mode": "LIVE_JITO_ENGINE" if (signed_bundle and signed_bundle.is_live_signed) else "SANDBOX_SIMULATION_BRIDGE",
             "bundle_id": order.bundle.bundle_id if order.bundle else "N/A",
+            "signer_pubkey": self.wallet_manager.active_wallet.pubkey,
+            "transaction_signatures": signatures,
+            "slot_landed": dispatch_receipt.slot_landed if dispatch_receipt else None,
             "pool_address": order.pool_address,
             "token_mint": order.token_mint,
             "notional_usd": order.position_notional_usd,
@@ -208,8 +231,14 @@ class ExecutionBridge:
             "operator": operator_id,
             "timestamp": now,
         }
-        logger.info("Order %s APPROVED and EXECUTED by %s", order_id, operator_id)
-        return True, "Order approved and landed successfully", execution_receipt
+        logger.info(
+            "Order %s APPROVED & EXECUTED by %s (Signatures: %d, Mode: %s)",
+            order_id,
+            operator_id,
+            len(signatures),
+            execution_receipt["execution_mode"],
+        )
+        return True, "Order approved, signed, and landed successfully", execution_receipt
 
     def operator_reject_order(self, order_id: str, reason: str, operator_id: str = "OPERATOR_ADMIN") -> bool:
         """Operator rejects a staged order."""

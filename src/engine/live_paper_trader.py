@@ -16,11 +16,16 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from src.cost.double_gate import PreFlightDoubleGate
+from src.engine.event_bus import EventBus, StreamEventType, LiveSwapEvent, LiveAccountChangeEvent
+from src.engine.execution_simulator import FrictionExecutionSimulator
 from src.engine.models import PaperPosition, PositionState
 from src.engine.paper_ledger import PaperLedger
 from src.engine.simulator import PathASimulator
 from src.engine.market_structure import MarketStructureTracker
 from src.engine.order_flow import OrderFlowDynamicsEngine
+from src.engine.staleness_breaker import DataStalenessCircuitBreaker
+from src.engine.trade_accelerator import TradeAcceleratorConfig
+from src.engine.virtual_amm import VirtualAMMMirror
 from src.live.circuit_breaker import DailyCircuitBreaker
 from src.live.kill_switch import EmergencyKillSwitch
 from src.telemetry.live_market_feed import LiveMarketFeed
@@ -31,6 +36,8 @@ logger = logging.getLogger("LivePaperTrader")
 class LivePaperTradingEngine:
     """
     Coordinates continuous live paper trading against active incoming pools.
+    Integrates Virtual AMM Mirror, Data Staleness Circuit Breaker, Event Bus,
+    and the Realistic Execution Simulator (The Friction Engine).
     """
 
     def __init__(
@@ -46,9 +53,30 @@ class LivePaperTradingEngine:
         market_structure_tracker: Optional[MarketStructureTracker] = None,
         order_flow_engine: Optional[OrderFlowDynamicsEngine] = None,
         min_baseline_demand_usd: float = 100.0,
+        virtual_amm: Optional[VirtualAMMMirror] = None,
+        staleness_breaker: Optional[DataStalenessCircuitBreaker] = None,
+        event_bus: Optional[EventBus] = None,
+        enforce_staleness_breaker: bool = False,
+        execution_simulator: Optional[FrictionExecutionSimulator] = None,
+        enable_friction_engine: bool = True,
+        accelerator_config: Optional[TradeAcceleratorConfig] = None,
     ):
         self.ledger = PaperLedger(db_path=db_path)
-        self.sim = PathASimulator(ledger=self.ledger, sol_price_usd=sol_price_usd)
+        self.virtual_amm = virtual_amm or VirtualAMMMirror()
+        self.staleness_breaker = staleness_breaker or DataStalenessCircuitBreaker()
+        self.event_bus = event_bus or EventBus()
+        self.enforce_staleness_breaker = enforce_staleness_breaker
+        self.accelerator_config = accelerator_config or TradeAcceleratorConfig()
+        self.execution_simulator = execution_simulator or FrictionExecutionSimulator(
+            virtual_amm=self.virtual_amm,
+            sol_price_usd=sol_price_usd,
+        )
+        self.sim = PathASimulator(
+            ledger=self.ledger,
+            sol_price_usd=sol_price_usd,
+            execution_simulator=self.execution_simulator,
+            enable_friction_engine=enable_friction_engine,
+        )
         self.circuit_breaker = circuit_breaker or DailyCircuitBreaker()
         self.kill_switch = kill_switch or EmergencyKillSwitch()
         self.double_gate = PreFlightDoubleGate()
@@ -62,6 +90,11 @@ class LivePaperTradingEngine:
             min_age_minutes=min_age_minutes,
             max_age_minutes=max_age_minutes,
         )
+
+        # Register event bus subscribers for real-time swap and reserve updates
+        self.event_bus.subscribe(StreamEventType.SWAP, self._on_live_swap_event)
+        self.event_bus.subscribe(StreamEventType.ACCOUNT_CHANGE, self._on_live_account_change)
+
         self.token_cooldowns: Dict[str, datetime] = {}
         self.sol_price_usd = sol_price_usd
         self.position_notional_usd = position_notional_usd
@@ -71,8 +104,34 @@ class LivePaperTradingEngine:
         self.traded_tokens: set = self._load_traded_tokens()
         self.state_file = Path(state_file)
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
-        self._current_pos: Optional[PaperPosition] = None
+        self._active_positions: Dict[str, PaperPosition] = {}
         self._load_active_position()
+
+    @property
+    def max_concurrent_positions(self) -> int:
+        """Concurrency limit: Up to 3 in Trade Accelerator mode, 1 standard."""
+        if self.accelerator_config and self.accelerator_config.enabled:
+            return self.accelerator_config.concurrency_limit
+        return 1
+
+    def has_capacity_for_new_trade(self) -> bool:
+        """Returns True if engine has capacity to open another position."""
+        return len(self._active_positions) < self.max_concurrent_positions
+
+    @property
+    def _current_pos(self) -> Optional[PaperPosition]:
+        """Backward-compatible property returning the primary active position."""
+        if not self._active_positions:
+            return None
+        return next(iter(self._active_positions.values()))
+
+    @_current_pos.setter
+    def _current_pos(self, pos: Optional[PaperPosition]) -> None:
+        """Backward-compatible setter for single active position."""
+        if pos is None:
+            self._active_positions.clear()
+        else:
+            self._active_positions[pos.position_id] = pos
 
     def _load_traded_tokens(self) -> set:
         """Loads all previously traded token mints from the database to prevent repeat buys."""
@@ -89,97 +148,116 @@ class LivePaperTradingEngine:
             return set()
 
     def _load_active_position(self) -> None:
-        """Loads currently open position from persistent JSON if present."""
+        """Loads open positions from persistent JSON if present."""
         if not self.state_file.exists():
             return
         try:
             with open(self.state_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                if not data or not data.get("is_active"):
-                    self._current_pos = None
+                if not data:
+                    self._active_positions.clear()
                     return
-                # Reconstruct position
-                entry_dt = datetime.fromisoformat(data["entry_time"])
-                self._current_pos = self.sim.open_position(
-                    position_id=data["position_id"],
-                    pool_address=data["pool_address"],
-                    token_mint=data["token_mint"],
-                    regime=data["regime"],
-                    market_cap_sol=data.get("market_cap_sol", 380.0),
-                    entry_price_sol=data["entry_price_sol"],
-                    tp1_target_gross_pct=data.get("tp1_target_gross_pct", 0.09),
-                    position_notional_usd=data.get("position_notional_usd", self.position_notional_usd),
-                    trailing_pct=data.get("runner_trailing_pct", 0.15),
-                    entry_time=entry_dt,
-                )
-                self._current_pos.peak_price_sol = data.get("peak_price_sol", data["entry_price_sol"])
-                self._current_pos.current_stop_price_sol = data.get("current_stop_price_sol", self._current_pos.current_stop_price_sol)
-                self._current_pos.tp1_activated = data.get("tp1_activated", False)
-                self._current_pos.ratchet_activated = self._current_pos.tp1_activated
-                if data.get("tp1_time"):
-                    self._current_pos.tp1_time = datetime.fromisoformat(data["tp1_time"])
-                if self._current_pos.tp1_activated:
-                    self._current_pos.state = PositionState.RUNNER_ACTIVE
+
+                pos_list = data.get("active_positions", [])
+                if not pos_list and data.get("is_active"):
+                    pos_list = [data]
+
+                self._active_positions.clear()
+                for p_data in pos_list:
+                    if not p_data or not p_data.get("is_active"):
+                        continue
+                    entry_dt = datetime.fromisoformat(p_data["entry_time"])
+                    pos = self.sim.open_position(
+                        position_id=p_data["position_id"],
+                        pool_address=p_data["pool_address"],
+                        token_mint=p_data["token_mint"],
+                        regime=p_data["regime"],
+                        market_cap_sol=p_data.get("market_cap_sol", 380.0),
+                        entry_price_sol=p_data["entry_price_sol"],
+                        tp1_target_gross_pct=p_data.get("tp1_target_gross_pct", 0.09),
+                        position_notional_usd=p_data.get("position_notional_usd", self.position_notional_usd),
+                        trailing_pct=p_data.get("runner_trailing_pct", 0.15),
+                        entry_time=entry_dt,
+                    )
+                    pos.peak_price_sol = p_data.get("peak_price_sol", p_data["entry_price_sol"])
+                    pos.current_stop_price_sol = p_data.get("current_stop_price_sol", pos.current_stop_price_sol)
+                    pos.tp1_activated = p_data.get("tp1_activated", False)
+                    pos.ratchet_activated = pos.tp1_activated
+                    if p_data.get("tp1_time"):
+                        pos.tp1_time = datetime.fromisoformat(p_data["tp1_time"])
+                    if pos.tp1_activated:
+                        pos.state = PositionState.RUNNER_ACTIVE
+                    self._active_positions[pos.position_id] = pos
         except Exception as e:
             logger.error("Failed to load active paper position: %s", e)
-            self._current_pos = None
+            self._active_positions.clear()
 
     def _save_active_position(self, current_price_sol: Optional[float] = None) -> None:
-        """Persists currently open position state to file."""
+        """Persists open positions state to file with multi-concurrency support."""
         tmp = self.state_file.with_suffix(".tmp")
-        if not self._current_pos or self._current_pos.is_closed:
-            out = {"is_active": False}
-        else:
-            curr_p = current_price_sol or self._current_pos.entry_price_sol
-            now = datetime.now(timezone.utc)
-            elapsed_m = (now - self._current_pos.entry_time).total_seconds() / 60.0
+        active_list = []
+        now = datetime.now(timezone.utc)
 
-            if self._current_pos.tp1_activated and self._current_pos.tp1_leg:
-                # Two-stage scale out: TP1 secured + runner live
-                sol_received_so_far = self._current_pos.tp1_leg.sol_amount
-                runner_sol_val = self._current_pos.runner_tokens_held * curr_p
+        for pos in self._active_positions.values():
+            if pos.is_closed:
+                continue
+            curr_p = current_price_sol or pos.entry_price_sol
+            elapsed_m = (now - pos.entry_time).total_seconds() / 60.0
+
+            if pos.tp1_activated and pos.tp1_leg:
+                sol_received_so_far = pos.tp1_leg.sol_amount
+                runner_sol_val = pos.runner_tokens_held * curr_p
                 total_sol = sol_received_so_far + runner_sol_val
-                friction_so_far = self._current_pos.entry_leg.total_friction_sol + self._current_pos.tp1_leg.total_friction_sol
-                net_sol = total_sol - self._current_pos.sol_spent - friction_so_far
+                friction_so_far = pos.entry_leg.total_friction_sol + pos.tp1_leg.total_friction_sol
+                net_sol = total_sol - pos.sol_spent - friction_so_far
                 unrealized_pnl_usd = net_sol * self.sol_price_usd
-                unrealized_return_pct = (net_sol / self._current_pos.sol_spent) * 100.0 if self._current_pos.sol_spent > 0 else 0.0
+                unrealized_return_pct = (net_sol / pos.sol_spent) * 100.0 if pos.sol_spent > 0 else 0.0
             else:
-                unrealized_return_pct = ((curr_p - self._current_pos.entry_price_sol) / self._current_pos.entry_price_sol) * 100.0 if self._current_pos.entry_price_sol > 0 else 0.0
-                unrealized_pnl_usd = (unrealized_return_pct / 100.0) * self._current_pos.position_notional_usd
+                unrealized_return_pct = ((curr_p - pos.entry_price_sol) / pos.entry_price_sol) * 100.0 if pos.entry_price_sol > 0 else 0.0
+                unrealized_pnl_usd = (unrealized_return_pct / 100.0) * pos.position_notional_usd
 
-            out = {
+            p_dict = {
                 "is_active": True,
-                "position_id": self._current_pos.position_id,
-                "pool_address": self._current_pos.pool_address,
-                "token_mint": self._current_pos.token_mint,
-                "regime": self._current_pos.regime,
-                "position_notional_usd": self._current_pos.position_notional_usd,
-                "entry_time": self._current_pos.entry_time.isoformat(),
-                "entry_price_sol": self._current_pos.entry_price_sol,
+                "position_id": pos.position_id,
+                "pool_address": pos.pool_address,
+                "token_mint": pos.token_mint,
+                "regime": pos.regime,
+                "position_notional_usd": pos.position_notional_usd,
+                "entry_time": pos.entry_time.isoformat(),
+                "entry_price_sol": pos.entry_price_sol,
                 "current_price_sol": curr_p,
-                "peak_price_sol": self._current_pos.peak_price_sol,
-                "current_stop_price_sol": self._current_pos.current_stop_price_sol,
-                "tp1_target_gross_pct": self._current_pos.tp1_target_gross_pct,
-                "tp1_price_sol": self._current_pos.tp1_price_sol,
-                "tp1_activated": self._current_pos.tp1_activated,
-                "tp1_time": self._current_pos.tp1_time.isoformat() if self._current_pos.tp1_time else None,
-                "tp1_size_pct": self._current_pos.tp1_size_pct,
-                "runner_size_pct": self._current_pos.runner_size_pct,
-                "runner_tokens_held": self._current_pos.runner_tokens_held,
-                "runner_trailing_pct": self._current_pos.runner_trailing_pct,
-                "runner_hard_kill_timeout_minutes": self._current_pos.runner_hard_kill_timeout_minutes,
-                "runner_target_gross_pct": self._current_pos.runner_target_gross_pct,
-                "ratchet_trigger_price_sol": self._current_pos.tp1_price_sol,
-                "ratchet_floor_price_sol": self._current_pos.ratchet_floor_price_sol,
-                "ratchet_activated": self._current_pos.tp1_activated,
-                "structure_stop_price_sol": self._current_pos.structure_stop_price_sol,
-                "lowest_low_2m_candles_sol": self._current_pos.lowest_low_2m_candles_sol,
-                "state": self._current_pos.state.value,
+                "peak_price_sol": pos.peak_price_sol,
+                "current_stop_price_sol": pos.current_stop_price_sol,
+                "tp1_target_gross_pct": pos.tp1_target_gross_pct,
+                "tp1_price_sol": pos.tp1_price_sol,
+                "tp1_activated": pos.tp1_activated,
+                "tp1_time": pos.tp1_time.isoformat() if pos.tp1_time else None,
+                "tp1_size_pct": pos.tp1_size_pct,
+                "runner_size_pct": pos.runner_size_pct,
+                "runner_tokens_held": pos.runner_tokens_held,
+                "runner_trailing_pct": pos.runner_trailing_pct,
+                "runner_hard_kill_timeout_minutes": pos.runner_hard_kill_timeout_minutes,
+                "runner_target_gross_pct": pos.runner_target_gross_pct,
+                "ratchet_trigger_price_sol": pos.tp1_price_sol,
+                "ratchet_floor_price_sol": pos.ratchet_floor_price_sol,
+                "ratchet_activated": pos.tp1_activated,
+                "structure_stop_price_sol": pos.structure_stop_price_sol,
+                "lowest_low_2m_candles_sol": pos.lowest_low_2m_candles_sol,
+                "state": pos.state.value,
                 "elapsed_minutes": round(elapsed_m, 1),
                 "unrealized_return_pct": round(unrealized_return_pct, 2),
                 "unrealized_pnl_usd": round(unrealized_pnl_usd, 2),
                 "updated_at": now.isoformat(),
             }
+            active_list.append(p_dict)
+
+        if not active_list:
+            out = {"is_active": False, "active_positions": []}
+        else:
+            primary = active_list[0].copy()
+            primary["active_positions"] = active_list
+            out = primary
+
         try:
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(out, f, indent=2)
@@ -188,7 +266,7 @@ class LivePaperTradingEngine:
             logger.error("Failed to save active paper position: %s", e)
 
     def get_active_position(self) -> Optional[Dict]:
-        """Returns the active position dictionary if one is open, else None."""
+        """Returns the primary active position dictionary if one is open, else None."""
         if not self.state_file.exists():
             return None
         try:
@@ -198,14 +276,40 @@ class LivePaperTradingEngine:
         except Exception:
             return None
 
+    def get_all_active_positions(self) -> List[Dict]:
+        """Returns list of all active position dictionaries."""
+        if not self.state_file.exists():
+            return []
+        try:
+            with open(self.state_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if not data or not data.get("is_active"):
+                    return []
+                return data.get("active_positions", [data])
+        except Exception:
+            return []
+
     def evaluate_candidate_gates(self, pool: Dict, quote: Optional[Dict]) -> Tuple[bool, str]:
         """
-        Evaluates the 4 Candidate Selection Gates:
-        Gate 1 (Pool Age): Retain 8–25 minutes initially; test alternative windows.
-        Gate 2 (Liquidity): Retain >= 25 SOL and >= $3,000, and verify reserve consistency.
-        Gate 3 (Activity): At least 3 txns, minimum buy-side activity (buys >= 2) and buy dominance.
-        Gate 4 (Momentum): Positive short-term price trend (5m >= 0%) with sustained buy pressure (vol_5m >= $300).
+        Evaluates the Candidate Selection Gates:
+        - Token-2022 Rejection Gate: Rejects Token-2022 with TransferFee before sizing.
+        - Gate 1 (Pool Age): Retain 8–25 minutes initially; test alternative windows.
+        - Gate 2 (Liquidity): Retain >= 25 SOL and >= $3,000, and verify reserve consistency.
+        - Gate 3 (Activity): At least 3 txns, minimum buy-side activity (buys >= 2) and buy dominance.
+        - Gate 4 (Momentum): Positive short-term price trend (5m >= 0%) with sustained buy pressure.
+        - Gate 5 (Invariant 3): Consolidation + Baseline Demand Floor ($100/min or $50/min in accelerator).
+        - Gate 6 (Fix 4): Slot-Level Order Flow Dynamics (VUW >= 1.20 or 1.05 in accelerator).
         """
+        # Token-2022 Rejection Gate (Test C defense against silent bricking)
+        is_t22 = (
+            pool.get("token_program") == "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+            or pool.get("is_token_2022", False)
+            or (quote and quote.get("is_token_2022", False))
+            or pool.get("has_transfer_fee", False)
+            or (quote and quote.get("has_transfer_fee", False))
+        )
+        if is_t22:
+            return False, "Token-2022 Rejection Gate: Token-2022 with TransferFee extension detected (Defense against silent bricking)"
         # 1. Gate 1: Pool Age Gate (Configurable window)
         now = datetime.now(timezone.utc)
         if "minutes_post_graduation" in pool:
@@ -223,6 +327,11 @@ class LivePaperTradingEngine:
 
         if not (self.min_age_minutes <= age_min <= self.max_age_minutes):
             return False, f"Pool Age Gate: {age_min:.1f}m outside [{self.min_age_minutes:.1f}m, {self.max_age_minutes:.1f}m]"
+
+        # Venue Gate: Strictly post-graduation AMM pools (exclude bonding curves like pumpfun)
+        dex_name = (pool.get("dex_name") or (quote.get("dex_id") if quote else "") or "").lower()
+        if "pumpfun" in dex_name:
+            return False, "Venue Gate: Raw bonding curve (pumpfun) is not a post-graduation AMM pool"
 
         # 2. Gate 2: Liquidity & Reserve Consistency Gate
         sol_res = float(pool.get("current_sol_reserve", 0.0))
@@ -278,6 +387,15 @@ class LivePaperTradingEngine:
         if vol_5m < 300.0:
             return False, f"Momentum Gate: Stagnant 5m volume (${vol_5m:,.0f} < $300)"
 
+        # Relaxation in Trade Accelerator mode:
+        if self.accelerator_config and self.accelerator_config.enabled:
+            # Relax Baseline Demand Floor to $50/min
+            pool["min_baseline_demand_usd"] = self.accelerator_config.relaxed_baseline_demand_usd
+            # Relax VUW threshold to 1.05
+            vuw_override = self.accelerator_config.relaxed_vuw_threshold
+        else:
+            vuw_override = None
+
         # 5. Gate 5 (Invariant 3): Volume Exhaustion Consolidation + Structural Breakout Gate
         ms_passed, ms_reason = self.market_structure.evaluate_structural_break(pool, quote, now)
         if not ms_passed:
@@ -291,6 +409,7 @@ class LivePaperTradingEngine:
             token_mint=pool.get("token_mint", ""),
             quote=quote,
             now=now,
+            min_vuw_ratio=vuw_override,
         )
         if quote and (
             "vuw" in quote
@@ -305,31 +424,93 @@ class LivePaperTradingEngine:
 
         return True, "Passed All Candidate Gates (Including Invariant 3 Structural Breakout & Invariant 5 Order Flow Dynamics)"
 
+    def _on_live_swap_event(self, event: LiveSwapEvent) -> None:
+        """
+        Event Processing: Every time a real-world swap event occurs on the stream,
+        recalculate local AMM reserves before evaluating strategy logic.
+        """
+        if not self.virtual_amm.has_pool(event.pool_address):
+            return
+
+        current_price_sol = self.virtual_amm.get_marginal_price(event.pool_address)
+        if not current_price_sol or current_price_sol <= 0:
+            return
+
+        # Check circuit breaker if enforced
+        if self.enforce_staleness_breaker:
+            can_execute, reason = self.staleness_breaker.can_execute_decision()
+            if not can_execute:
+                logger.warning("Live swap event skipped due to staleness: %s", reason)
+                return
+
+        # Update any open active position matching this pool or token
+        for pos_id, pos in list(self._active_positions.items()):
+            if pos.pool_address == event.pool_address or pos.token_mint == event.token_mint:
+                now = event.timestamp or datetime.now(timezone.utc)
+                vol_usd = event.sol_amount * self.sol_price_usd
+                updated = self.sim.update_price_tick(
+                    pos,
+                    current_price_sol,
+                    now,
+                    vol_1m_usd=vol_usd,
+                )
+                if updated.is_closed:
+                    logger.info(
+                        "Live Swap Event triggered exit on position %s: %s (Net P&L: $%.2f)",
+                        updated.position_id, updated.exit_reason, updated.realized_net_pnl_usd
+                    )
+                    self.circuit_breaker.record_trade_pnl(updated.realized_net_pnl_usd)
+                    self.token_cooldowns[updated.token_mint] = now + timedelta(minutes=45)
+                    self._active_positions.pop(pos_id, None)
+                    self._save_active_position()
+                else:
+                    self._save_active_position(current_price_sol=current_price_sol)
+
+    def _on_live_account_change(self, event: LiveAccountChangeEvent) -> None:
+        """Processes live on-chain reserve synchronization from accountChange event."""
+        if self.virtual_amm.has_pool(event.pool_address):
+            p = self.virtual_amm.get_marginal_price(event.pool_address)
+            logger.debug("AccountChange synchronized pool %s: marginal price = %.8f SOL", event.pool_address, p or 0.0)
+
     def on_market_tick(self, pools: List[Dict], current_time: Optional[datetime] = None) -> Optional[Dict]:
         """
         Called on every market tick.
-        1. If an active position exists, updates price against current market data and checks stops.
-        2. If no position exists, looks for a candidate pool in ACTIVE_WINDOW passing gates.
+        1. If active positions exist, updates prices against current market data and checks stops.
+        2. If active positions count < max_concurrent_positions, evaluates new candidates passing gates.
         """
         now = current_time or datetime.now(timezone.utc)
 
-        # 1. Update Existing Position if open
-        if self._current_pos:
-            target_pool = next((p for p in pools if p.get("pool_address") == self._current_pos.pool_address), None)
-            if target_pool and target_pool.get("current_sol_reserve", 0) > 0 and target_pool.get("current_token_reserve", 0) > 0:
-                current_price_sol = target_pool["current_sol_reserve"] / target_pool["current_token_reserve"]
-                current_token_reserve = float(target_pool["current_token_reserve"])
-            else:
-                # Derive price from market cap or entry price
-                current_price_sol = self._current_pos.peak_price_sol
-                current_token_reserve = None
+        # Data Staleness Circuit Breaker:
+        # If time_since_last_ws_message > 1000ms, pause the engine. Do not make decisions on stale state.
+        if self.enforce_staleness_breaker:
+            can_execute, reason = self.staleness_breaker.can_execute_decision()
+            if not can_execute:
+                logger.warning("Trading Engine PAUSED: %s", reason)
+                return {"status": "PAUSED_DATA_STALE", "reason": reason}
 
-            # Fetch live quote for 1m volume & simulated sell slippage
-            quote = self.live_feed.get_live_token_quote(self._current_pos.token_mint) if self.live_feed else None
+        # 1. Update Existing Active Positions
+        closed_summaries = []
+        for pos_id, pos in list(self._active_positions.items()):
+            quote = self.live_feed.get_live_token_quote(pos.token_mint) if self.live_feed else None
             vol_1m = float(quote.get("volume_1m_usd", 0.0)) if quote else 0.0
 
+            target_pool = next((p for p in pools if p.get("pool_address") == pos.pool_address), None)
+            current_token_reserve = None
+            if target_pool and target_pool.get("current_token_reserve", 0) > 0:
+                current_token_reserve = float(target_pool["current_token_reserve"])
+
+            amm_price = self.virtual_amm.get_marginal_price(pos.pool_address) if self.virtual_amm else None
+            if amm_price and amm_price > 0:
+                current_price_sol = amm_price
+            elif quote and quote.get("price_sol", 0.0) > 0:
+                current_price_sol = quote["price_sol"]
+            elif target_pool and target_pool.get("current_sol_reserve", 0) > 0 and target_pool.get("current_token_reserve", 0) > 0:
+                current_price_sol = target_pool["current_sol_reserve"] / target_pool["current_token_reserve"]
+            else:
+                current_price_sol = pos.peak_price_sol
+
             updated = self.sim.update_price_tick(
-                self._current_pos,
+                pos,
                 current_price_sol,
                 now,
                 vol_1m_usd=vol_1m,
@@ -344,25 +525,29 @@ class LivePaperTradingEngine:
                 )
                 self.circuit_breaker.record_trade_pnl(updated.realized_net_pnl_usd)
                 self.token_cooldowns[updated.token_mint] = now + timedelta(minutes=45)
-                closed_summary = {
+                closed_summaries.append({
                     "position_id": updated.position_id,
                     "status": "CLOSED",
                     "exit_reason": updated.exit_reason,
                     "net_pnl_usd": updated.realized_net_pnl_usd,
                     "net_return_pct": updated.realized_net_return_pct,
-                }
-                self._current_pos = None
-                self._save_active_position()
-                return closed_summary
-            else:
-                self._save_active_position(current_price_sol=current_price_sol)
-                return self.get_active_position()
+                })
+                self._active_positions.pop(pos_id, None)
 
-        # 2. No Open Position — Evaluate New Candidate Entry
+        if closed_summaries:
+            self._save_active_position()
+            return closed_summaries[0]
+        elif self._active_positions:
+            self._save_active_position()
+
+        # 2. Concurrency Check: If at or above max allowed positions, return current active position
+        if len(self._active_positions) >= self.max_concurrent_positions:
+            return self.get_active_position()
+
+        # 3. Pre-Flight Risk & Kill Switch Checks
         if self.kill_switch.is_tripped():
             return None
 
-        # Check pre-flight risk capacity
         can_trade, _, _ = self.circuit_breaker.check_preflight_capacity(
             position_notional_usd=self.position_notional_usd,
             sol_price_usd=self.sol_price_usd,
@@ -370,7 +555,7 @@ class LivePaperTradingEngine:
         if not can_trade:
             return None
 
-        # Scan for candidate pools within the configured age window (8-25m initially; supports testing alternative windows)
+        # Scan for candidate pools within configured window
         candidate_pools = [
             p for p in pools
             if (self.min_age_minutes <= float(p.get("minutes_post_graduation", p.get("age_minutes", 0.0))) <= self.max_age_minutes)
@@ -379,44 +564,68 @@ class LivePaperTradingEngine:
         if not candidate_pools:
             return None
 
-        # Evaluate candidates against the 4 Gates and Pre-Flight Double Gate (Invariant 4)
+        # Exclude tokens currently held in active positions
+        currently_held_mints = {p.token_mint for p in self._active_positions.values()}
+
         valid_candidates = []
         for pool in candidate_pools:
             mint = pool["token_mint"]
-            # 1. Skip if token was already traded (enforce 1 trade per token per graduation)
+            pool_addr = pool.get("pool_address", "")
+            sol_res = float(pool.get("current_sol_reserve", 0.0))
+            tok_res = float(pool.get("current_token_reserve", 206_900_000.0))
+
+            if mint in currently_held_mints:
+                continue
+
+            # Mirror candidate pool in Virtual AMM
+            if pool_addr and sol_res > 0 and not self.virtual_amm.has_pool(pool_addr):
+                self.virtual_amm.register_pool(
+                    pool_address=pool_addr,
+                    token_mint=mint,
+                    initial_sol_reserve=sol_res,
+                    initial_token_reserve=tok_res if tok_res > 0 else 206_900_000.0,
+                )
+
+            # Skip if token was already traded (enforce 1 trade per token per graduation)
             if mint in self.traded_tokens:
                 logger.debug("Candidate %s skipped: Token already traded in this session/history", mint)
                 continue
 
-            # 2. Skip if token is on cooldown (recently closed/stopped out)
+            # Skip if token is on cooldown (recently closed/stopped out)
             if mint in self.token_cooldowns and now < self.token_cooldowns[mint]:
                 continue
 
-            # 2. Fetch live real market quote to verify liquidity, activity & momentum
             quote = self.live_feed.get_live_token_quote(mint)
 
-            # 3. Apply the 4 Selection Gates: Pool Age, Liquidity & Reserve Consistency, Activity, Momentum
+            # Apply Candidate Selection Gates (including Token-2022 rejection)
             passed_gates, gate_reason = self.evaluate_candidate_gates(pool, quote)
             if not passed_gates:
                 logger.debug("Candidate %s rejected by Gate: %s", mint, gate_reason)
                 continue
 
-            # 4. Pre-Flight Double Gate (depth, fee regime, and mathematical friction ceiling)
-            sol_res = float(pool.get("current_sol_reserve", 0.0))
+            # Pre-Flight Double Gate with dynamic sizing floor
             mc_sol = float(pool.get("market_cap_sol", 380.0))
+            min_swap_floor = (
+                self.accelerator_config.relaxed_min_dynamic_size_usd
+                if (self.accelerator_config and self.accelerator_config.enabled)
+                else 3.00
+            )
             gate_res = self.double_gate.evaluate(
                 pool_address=pool["pool_address"],
                 token_mint=mint,
                 market_cap_sol=mc_sol,
                 current_sol_reserve=sol_res,
                 position_notional_usd=self.position_notional_usd,
+                min_viable_swap_usd=min_swap_floor,
             )
             if not gate_res.is_passed:
                 logger.debug("Candidate %s rejected by PreFlightDoubleGate: %s", mint, gate_res.rejection_reasons)
                 continue
 
-            # 5. Exact market entry price synchronized with live quote (eliminates basis mismatch)
-            if quote and quote.get("price_sol", 0.0) > 0.0:
+            amm_price = self.virtual_amm.get_marginal_price(pool_addr) if pool_addr else None
+            if amm_price and amm_price > 0.0:
+                entry_price = amm_price
+            elif quote and quote.get("price_sol", 0.0) > 0.0:
                 entry_price = quote["price_sol"]
             else:
                 entry_price = float(pool.get("price_sol") or 0.0)
@@ -434,19 +643,20 @@ class LivePaperTradingEngine:
         pool_addr = candidate["pool_address"]
         token_mint = candidate["token_mint"]
         mc_sol = candidate.get("market_cap_sol", 380.0)
-        regime = best_gate.regime.value
-        pos_id = f"live_paper_{int(now.timestamp()) % 100000}"
+
+        # Tag regime: in Trade Accelerator session, tag as REGIME_TEST
+        if self.accelerator_config and self.accelerator_config.enabled:
+            regime = self.accelerator_config.session_regime_tag
+        else:
+            regime = best_gate.regime.value
+
+        pos_id = f"live_paper_{int(now.timestamp()) % 100000}_{len(self._active_positions) + 1}"
         ratchet_pct = best_gate.ratchet_trigger_gross_pct
-
         breakout_vol = float(candidate.get("breakout_buy_vol") or candidate.get("volume_1m_usd") or 0.0)
-
-        # Fix 5: Dynamic Position Sizing (min(Calculated Max Safe Swap, $25 active wallet limit))
         entry_position_usd = best_gate.dynamic_position_size_usd or self.position_notional_usd
-
-        # Invariant 4: TP1 Friction Buster target (+8% to +10%, default +9%) replaces Ratchet Trigger
         tp1_target = (best_gate.tp1_target_gross_pct / 100.0) if hasattr(best_gate, "tp1_target_gross_pct") else 0.09
 
-        self._current_pos = self.sim.open_position(
+        new_pos = self.sim.open_position(
             position_id=pos_id,
             pool_address=pool_addr,
             token_mint=token_mint,
@@ -459,13 +669,97 @@ class LivePaperTradingEngine:
             entry_time=now,
             entry_breakout_volume_usd=breakout_vol,
         )
+        self._active_positions[pos_id] = new_pos
         self.traded_tokens.add(token_mint)
         logger.info(
-            "Opened NEW live paper position %s on %s (Dynamically sized to $%.2f at <=1.5%% impact)",
-            pos_id, token_mint, entry_position_usd
+            "Opened NEW live paper position %s on %s (Concurrency: %d/%d, sized to $%.2f, regime: %s)",
+            pos_id, token_mint, len(self._active_positions), self.max_concurrent_positions, entry_position_usd, regime
         )
         self._save_active_position(current_price_sol=entry_price)
         return self.get_active_position()
+
+    def on_candidate_detected(
+        self,
+        pool: Dict,
+        quote: Optional[Dict] = None,
+        current_time: Optional[datetime] = None,
+    ) -> Optional[PaperPosition]:
+        """
+        Direct candidate evaluation and position opening for testing and pipeline feeds.
+        Returns opened PaperPosition if candidate passes all gates and capacity is available.
+        """
+        now = current_time or datetime.now(timezone.utc)
+        if len(self._active_positions) >= self.max_concurrent_positions:
+            return None
+        if self.kill_switch.is_tripped():
+            return None
+
+        can_trade, _, _ = self.circuit_breaker.check_preflight_capacity(
+            position_notional_usd=self.position_notional_usd,
+            sol_price_usd=self.sol_price_usd,
+        )
+        if not can_trade:
+            return None
+
+        mint = pool["token_mint"]
+        pool_addr = pool.get("pool_address", "")
+        sol_res = float(pool.get("current_sol_reserve", 0.0))
+        tok_res = float(pool.get("current_token_reserve", 206_900_000.0))
+
+        if mint in self.traded_tokens:
+            return None
+
+        if pool_addr and sol_res > 0 and not self.virtual_amm.has_pool(pool_addr):
+            self.virtual_amm.register_pool(
+                pool_address=pool_addr,
+                token_mint=mint,
+                initial_sol_reserve=sol_res,
+                initial_token_reserve=tok_res if tok_res > 0 else 206_900_000.0,
+            )
+
+        passed_gates, _ = self.evaluate_candidate_gates(pool, quote)
+        if not passed_gates:
+            return None
+
+        mc_sol = float(pool.get("market_cap_sol", 380.0))
+        min_swap_floor = (
+            self.accelerator_config.relaxed_min_dynamic_size_usd
+            if (self.accelerator_config and self.accelerator_config.enabled)
+            else 3.00
+        )
+        gate_res = self.double_gate.evaluate(
+            pool_address=pool_addr,
+            token_mint=mint,
+            market_cap_sol=mc_sol,
+            current_sol_reserve=sol_res,
+            position_notional_usd=self.position_notional_usd,
+            min_viable_swap_usd=min_swap_floor,
+        )
+        if not gate_res.is_passed:
+            return None
+
+        entry_price = float(quote.get("price_sol")) if (quote and quote.get("price_sol")) else (sol_res / tok_res if tok_res > 0 else 0.0001)
+        if self.accelerator_config and self.accelerator_config.enabled:
+            regime = self.accelerator_config.session_regime_tag
+        else:
+            regime = gate_res.regime.value
+
+        pos_id = f"live_paper_{int(now.timestamp()) % 100000}_{len(self._active_positions) + 1}"
+        new_pos = self.sim.open_position(
+            position_id=pos_id,
+            pool_address=pool_addr,
+            token_mint=mint,
+            regime=regime,
+            market_cap_sol=mc_sol,
+            entry_price_sol=entry_price,
+            tp1_target_gross_pct=0.09,
+            position_notional_usd=gate_res.dynamic_position_size_usd or self.position_notional_usd,
+            entry_time=now,
+        )
+        self._active_positions[pos_id] = new_pos
+        self.traded_tokens.add(mint)
+        self._save_active_position(current_price_sol=entry_price)
+        return new_pos
 
     def manual_close_active_position(self, reason: str = "MANUAL_OPERATOR_CLOSE") -> Optional[Dict]:
         """Manually closes the active paper position on demand."""

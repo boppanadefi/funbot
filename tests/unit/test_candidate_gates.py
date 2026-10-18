@@ -482,3 +482,28 @@ def test_market_structure_tracker_record_tick_dead_token_lifecycle():
     assert not passed
     assert "Baseline Demand Floor Gate" in reason
 
+
+def test_venue_gate_rejects_pumpfun_bonding_curve(paper_engine):
+    """
+    Verifies that raw pumpfun bonding curves are rejected by the Venue Gate.
+    Only post-graduation AMM pools (PumpSwap, Raydium, Meteora) are allowed.
+    """
+    pool_pumpfun = {
+        "token_mint": "MintPumpfun01",
+        "pool_address": "PoolBondingCurve01",
+        "minutes_post_graduation": 12.0,
+        "current_sol_reserve": 35.0,
+        "dex_name": "pumpfun",
+    }
+    quote_pumpfun = {
+        "dex_id": "pumpfun",
+        "price_sol": 0.00001,
+        "liquidity_usd": 5000.0,
+        "quote_sol_reserve": 16.0,
+    }
+    passed, reason = paper_engine.evaluate_candidate_gates(pool_pumpfun, quote=quote_pumpfun)
+    assert not passed
+    assert "Venue Gate" in reason
+    assert "Raw bonding curve (pumpfun)" in reason
+
+

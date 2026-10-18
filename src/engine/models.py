@@ -45,6 +45,10 @@ class ExecutionLeg:
     jito_tip_sol: float
     priority_fee_sol: float
     base_fee_sol: float = 0.000005
+    self_impact_pct: float = 0.0
+    slot_latency_ms: float = 0.0
+    mev_penalty_pct: float = 0.0
+    frontrun_sol: float = 0.0
 
     @property
     def total_friction_sol(self) -> float:
@@ -100,11 +104,31 @@ class PaperPosition:
     lowest_low_2m_candles_sol: float = 0.0
     last_liquidity_check_time: Optional[datetime] = None
     trailing_mode: str = "STRUCTURE"  # "STRUCTURE" (candle lows) or "PERCENTAGE" (peak trail)
+    # Phase 3: The Paper Ledger (Strict Accounting) timestamps:
+    signal_ts: Optional[datetime] = None      # Timestamp strategy triggered
+    entry_sim_ts: Optional[datetime] = None   # Timestamp simulated transaction "landed"
     # Backward compatibility attributes:
     ratchet_trigger_price_sol: float = 0.0
     ratchet_floor_price_sol: float = 0.0
     trailing_pct: float = 0.15
     ratchet_activated: bool = False
+
+    @property
+    def tp1_fill_prices(self) -> List[float]:
+        """Array of 3 prices for the 3x 30% time-sliced exits."""
+        return [leg.price_sol for leg in self.tp1_legs]
+
+    @property
+    def runner_exit_price(self) -> Optional[float]:
+        """Fill price of the final 10% runner, or None if runner not reached."""
+        return self.runner_leg.price_sol if self.runner_leg else None
+
+    @property
+    def position_size_sol(self) -> float:
+        """Exact SOL spent (including fees)."""
+        if self.entry_leg:
+            return round(self.sol_spent + self.entry_leg.total_friction_sol, 6)
+        return round(self.sol_spent, 6)
 
     @property
     def duration_minutes(self) -> float:

@@ -15,6 +15,21 @@ from src.engine.simulator import PathASimulator
 from src.engine.risk_monitor import DailyRiskMonitor
 from src.engine.validator import OutOfSampleValidator
 from src.engine.hit_rate_surface import HitRateSurfaceAnalyzer
+from src.engine.entry_orchestrator import (
+    EntryDecisionOrchestrator,
+    EntryEvaluationResult,
+    CandidateContext,
+    CheckStatus,
+    IndividualCheckResult,
+)
+from src.engine.position_state_machine import (
+    PositionStateMachine,
+    PositionContext,
+    ExecutionMode,
+    IllegalStateTransitionError,
+    StateTransitionRecord,
+)
+from src.engine.exit_timer_manager import ExitTimerManager
 
 __all__ = [
     "PaperPosition",
@@ -27,4 +42,15 @@ __all__ = [
     "DailyRiskMonitor",
     "OutOfSampleValidator",
     "HitRateSurfaceAnalyzer",
+    "EntryDecisionOrchestrator",
+    "EntryEvaluationResult",
+    "CandidateContext",
+    "CheckStatus",
+    "IndividualCheckResult",
+    "PositionStateMachine",
+    "PositionContext",
+    "ExecutionMode",
+    "IllegalStateTransitionError",
+    "StateTransitionRecord",
+    "ExitTimerManager",
 ]

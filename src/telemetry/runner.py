@@ -7,6 +7,7 @@ Continuously executes Path A+ Paper Trading against incoming market data.
 """
 
 import argparse
+import asyncio
 from datetime import datetime, timezone, timedelta
 import logging
 import random
@@ -14,11 +15,15 @@ import sys
 import time
 from typing import Optional
 
+from src.engine.event_bus import EventBus, StreamEventType, LiveSwapEvent
+from src.engine.staleness_breaker import DataStalenessCircuitBreaker
+from src.engine.virtual_amm import VirtualAMMMirror
 from src.telemetry.flow_telemetry import FlowTelemetryEngine, SwapEvent
 from src.telemetry.pool_discovery import PoolDiscoveryEngine, PoolMigrationEvent, NATIVE_SOL_MINT
 from src.telemetry.state_tracker import PoolStateTracker, PoolState
 from src.telemetry.storage import TelemetryStorage
 from src.telemetry.live_market_feed import LiveMarketFeed
+from src.telemetry.ws_stream import PumpSwapWSSClient
 from src.engine.live_paper_trader import LivePaperTradingEngine
 from src.utils.config import ConfigLoader, TelemetryConfig
 
@@ -39,7 +44,22 @@ class TelemetryRunner:
         self.discovery = PoolDiscoveryEngine(self.config)
         self.tracker = PoolStateTracker()
         self.flow_engine = FlowTelemetryEngine()
-        self.paper_engine = LivePaperTradingEngine(db_path=self.config.sqlite_db_path)
+        self.virtual_amm = VirtualAMMMirror()
+        self.staleness_breaker = DataStalenessCircuitBreaker(max_staleness_ms=1000.0)
+        self.event_bus = EventBus()
+        self.wss_client = PumpSwapWSSClient(
+            wss_url=self.config.ws_rpc_url,
+            event_bus=self.event_bus,
+            staleness_breaker=self.staleness_breaker,
+            virtual_amm=self.virtual_amm,
+        )
+        self.paper_engine = LivePaperTradingEngine(
+            db_path=self.config.sqlite_db_path,
+            virtual_amm=self.virtual_amm,
+            staleness_breaker=self.staleness_breaker,
+            event_bus=self.event_bus,
+            enforce_staleness_breaker=(mode == "wss"),
+        )
         self.live_feed = LiveMarketFeed(sol_price_usd=155.0)
         self.mode = mode
 
@@ -59,7 +79,16 @@ class TelemetryRunner:
             "market_cap_sol": tracked.market_cap_sol,
             "state": tracked.state.value,
         })
-        logger.info("Persisted new pool: %s", tracked.pool_address)
+        # Mirror pool in Virtual AMM and subscribe to WSS account changes
+        if not self.virtual_amm.has_pool(tracked.pool_address):
+            self.virtual_amm.register_pool(
+                pool_address=tracked.pool_address,
+                token_mint=tracked.token_mint,
+                initial_sol_reserve=tracked.current_sol_reserve,
+                initial_token_reserve=tracked.current_token_reserve,
+            )
+        self.wss_client.subscribe_pool_accounts(tracked.pool_address)
+        logger.info("Persisted & mirrored new pool: %s", tracked.pool_address)
 
     def fetch_real_market_tick(self) -> None:
         """Pulls real on-chain Solana tokens and executes real-data paper trading."""
@@ -167,6 +196,30 @@ class TelemetryRunner:
             self.flow_engine.record_swap(swap, pool)
             metrics = self.flow_engine.compute_rolling_metrics(pool)
 
+            # Recalculate local AMM reserves before strategy evaluation
+            self.virtual_amm.process_swap_event(
+                pool_address=addr,
+                is_buy=is_buy,
+                sol_amount=swap_sol,
+                token_amount=swap_tokens,
+                slot=swap.slot,
+            )
+            # Reset staleness breaker latency timer
+            self.staleness_breaker.record_message_received(slot=swap.slot)
+            # Publish swap event on Event Bus
+            self.event_bus.publish(
+                StreamEventType.SWAP,
+                LiveSwapEvent(
+                    pool_address=addr,
+                    token_mint=pool.token_mint,
+                    is_buy=is_buy,
+                    sol_amount=swap_sol,
+                    token_amount=swap_tokens,
+                    trader_pubkey=swap.trader_pubkey,
+                    slot=swap.slot,
+                ),
+            )
+
             self.storage.upsert_pool({
                 "pool_address": pool.pool_address,
                 "token_mint": pool.token_mint,
@@ -193,9 +246,32 @@ class TelemetryRunner:
         if active_pools:
             self.paper_engine.on_market_tick(active_pools, now)
 
+    async def run_wss_stream(self) -> None:
+        """Runs the live dedicated WebSocket stream (Helius/Triton) with paper trading."""
+        logger.info("Starting Dedicated Solana WebSocket stream on %s", self.wss_client.wss_url)
+        wss_task = asyncio.create_task(self.wss_client.connect_and_listen())
+
+        try:
+            while True:
+                active_pools = self.storage.get_active_candidates()
+                now = datetime.now(timezone.utc)
+                if active_pools:
+                    self.paper_engine.on_market_tick(active_pools, now)
+                await asyncio.sleep(0.5)
+        except asyncio.CancelledError:
+            self.wss_client.stop()
+            wss_task.cancel()
+
     def run_continuous(self, interval_seconds: float = 3.0, max_ticks: Optional[int] = None) -> None:
         """Run continuous observational telemetry ingestion."""
         logger.info("Starting TelemetryRunner in '%s' mode (Interval: %.1fs)...", self.mode, interval_seconds)
+        if self.mode == "wss":
+            try:
+                asyncio.run(self.run_wss_stream())
+            except KeyboardInterrupt:
+                logger.info("TelemetryRunner WSS interrupted by operator.")
+            return
+
         ticks = 0
         try:
             while max_ticks is None or ticks < max_ticks:
@@ -217,7 +293,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Funbot Phase 1 Telemetry Runner")
     parser.add_argument("--interval", type=float, default=3.0, help="Tick interval in seconds")
     parser.add_argument("--ticks", type=int, default=None, help="Max ticks (for testing)")
-    parser.add_argument("--mode", type=str, default="real", choices=["real", "sim"], help="Data feed mode ('real' or 'sim')")
+    parser.add_argument("--mode", type=str, default="real", choices=["real", "sim", "wss"], help="Data feed mode ('real', 'sim', 'wss')")
     args = parser.parse_args()
 
     runner = TelemetryRunner(mode=args.mode)

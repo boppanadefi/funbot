@@ -8,10 +8,27 @@ from datetime import datetime, timezone
 from typing import Dict, List
 import streamlit as st
 
+import importlib
+import src.live.wallet_manager
+import src.live.transaction_signer
+import src.live.execution_bridge
+import src.telemetry.rpc_client
+
+try:
+    importlib.reload(src.live.wallet_manager)
+    importlib.reload(src.live.transaction_signer)
+    importlib.reload(src.live.execution_bridge)
+    importlib.reload(src.telemetry.rpc_client)
+except Exception:
+    pass
+
 from src.live.circuit_breaker import DailyCircuitBreaker
 from src.live.execution_bridge import ExecutionBridge
 from src.live.jito_bundle_builder import JitoBundleBuilder
 from src.live.kill_switch import EmergencyKillSwitch
+from src.live.wallet_manager import WalletManager
+from src.live.transaction_signer import SolanaTransactionSigner
+from src.telemetry.rpc_client import SolanaConnectionMonitor
 
 
 def render_live_control_panel(pools: List[Dict], is_dark: bool = True) -> None:
@@ -201,6 +218,135 @@ def render_live_control_panel(pools: List[Dict], is_dark: bool = True) -> None:
                 """,
                 unsafe_allow_html=True,
             )
+
+    # 4.5. SOLANA RPC & WEBSOCKET NETWORK BRIDGE (HELIUS DEDICATED)
+    rpc_monitor = SolanaConnectionMonitor()
+    rpc_diag = rpc_monitor.get_full_diagnostics()
+    slot_label = f"#{rpc_diag['slot']:,}" if rpc_diag.get("slot") else "Awaiting Sync"
+
+    st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div class="metric-card" style="margin-bottom: 1rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; flex-wrap: wrap; gap: 0.5rem;">
+                <div>
+                    <strong style="font-size: 0.95rem;">⚡ Solana Dedicated RPC & WebSocket Bridge</strong>
+                    <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 0.1rem;">
+                        Provider: {rpc_diag['provider']} • PumpSwap Program ID: <code>6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P</code>
+                    </div>
+                </div>
+                <div>
+                    <span class="badge {'badge-green' if rpc_diag['http']['ok'] else 'badge-red'}">
+                        HTTP RPC: {rpc_diag['http']['status']} ({rpc_diag['http']['latency_ms']}ms)
+                    </span>
+                    <span class="badge {'badge-blue' if rpc_diag['ws']['ok'] else 'badge-amber'}" style="margin-left: 0.4rem;">
+                        WSS: {rpc_diag['ws']['status']} ({rpc_diag['ws'].get('latency_ms', 0)}ms)
+                    </span>
+                </div>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.6rem; font-size: 0.78rem;">
+                <div style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem;">
+                    <div style="font-size: 0.72rem; color: var(--text-muted);">Current Slot</div>
+                    <div class="mono" style="font-weight: 700; color: var(--green); font-size: 0.95rem;">{slot_label}</div>
+                    <div style="font-size: 0.72rem; color: var(--text-muted);">Mainnet Block Progression</div>
+                </div>
+                <div style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem;">
+                    <div style="font-size: 0.72rem; color: var(--text-muted);">HTTP RPC Endpoint</div>
+                    <div class="mono" style="font-weight: 600; color: var(--text); font-size: 0.75rem; word-break: break-all;">{rpc_diag['http']['endpoint']}</div>
+                    <div style="font-size: 0.72rem; color: var(--green);">Round-trip: {rpc_diag['http']['latency_ms']}ms</div>
+                </div>
+                <div style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem;">
+                    <div style="font-size: 0.72rem; color: var(--text-muted);">WebSocket Endpoint</div>
+                    <div class="mono" style="font-weight: 600; color: var(--text); font-size: 0.75rem; word-break: break-all;">{rpc_diag['ws']['endpoint']}</div>
+                    <div style="font-size: 0.72rem; color: var(--blue);">Handshake: {rpc_diag['ws'].get('latency_ms', 0)}ms</div>
+                </div>
+                <div style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem;">
+                    <div style="font-size: 0.72rem; color: var(--text-muted);">Data Staleness Ceiling</div>
+                    <div class="mono" style="font-weight: 700; color: var(--green); font-size: 0.95rem;">&lt; 1,000 ms</div>
+                    <div style="font-size: 0.72rem; color: var(--text-muted);">Circuit Breaker Active</div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # 4.8. ACTIVE TRADING WALLET & ED25519 TRANSACTION SIGNER (SECTION 7.1)
+    wallet_mgr = WalletManager()
+    wallet_info = wallet_mgr.get_wallet_overview()
+    signer = SolanaTransactionSigner(wallet_manager=wallet_mgr)
+
+    st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div class="metric-card" style="margin-bottom: 1rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; flex-wrap: wrap; gap: 0.5rem;">
+                <div>
+                    <strong style="font-size: 0.95rem;">💼 Active Trading Wallet & Ed25519 Signer (Section 7.1)</strong>
+                    <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 0.1rem;">
+                        Account Isolation: <strong>$25.00 Active Sub-Wallet</strong> • <strong>$75.00 Cold Segregated Reserve</strong> (Separate Keypair)
+                    </div>
+                </div>
+                <div>
+                    <span class="badge {'badge-green' if wallet_info['is_live'] else 'badge-amber'}">
+                        {wallet_info['label']}
+                    </span>
+                    <span class="badge badge-blue" style="margin-left: 0.4rem;">
+                        ED25519 CRYPTO ENGINE: READY
+                    </span>
+                </div>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.6rem; font-size: 0.78rem;">
+                <div style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem;">
+                    <div style="font-size: 0.72rem; color: var(--text-muted);">Active Wallet Pubkey</div>
+                    <div class="mono" style="font-weight: 700; color: var(--blue); font-size: 0.82rem; word-break: break-all;">
+                        {wallet_info['pubkey']}
+                    </div>
+                    <div style="font-size: 0.72rem; color: var(--text-muted);">Loaded from .env / Keypair</div>
+                </div>
+                <div style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem;">
+                    <div style="font-size: 0.72rem; color: var(--text-muted);">Active Sub-Wallet Balance</div>
+                    <div class="mono" style="font-weight: 700; color: var(--green); font-size: 0.95rem;">
+                        {wallet_info['balance_sol']:.4f} SOL (${wallet_info['balance_usd']:.2f})
+                    </div>
+                    <div style="font-size: 0.72rem; color: var(--text-muted);">Capped at $25.00 Sizing Limit</div>
+                </div>
+                <div style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem;">
+                    <div style="font-size: 0.72rem; color: var(--text-muted);">Cold Segregated Reserve</div>
+                    <div class="mono" style="font-weight: 700; color: #a855f7; font-size: 0.95rem;">
+                        $75.00 (Cold Storage)
+                    </div>
+                    <div style="font-size: 0.72rem; color: var(--text-muted);">Zero Programmatic Access</div>
+                </div>
+                <div style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem;">
+                    <div style="font-size: 0.72rem; color: var(--text-muted);">Guaranteed Exit Tip Reserve</div>
+                    <div class="mono" style="font-weight: 700; color: var(--green); font-size: 0.95rem;">
+                        {wallet_info['emergency_reserve_sol']:.4f} SOL (${wallet_info['exit_reserve_usd']:.2f})
+                    </div>
+                    <div style="font-size: 0.72rem; color: var(--text-muted);">Mandatory Jito Exit Budget</div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if st.button("✍️ Test Ed25519 Atomic Bundle Signing & Verification", key="btn_test_signing"):
+        test_bundle = bundle_builder.build_atomic_swap_bundle(
+            pool_address="PoolSignTest11111111111111111111111111111",
+            token_mint="MintSignTest11111111111111111111111111111",
+            is_buy=True,
+            position_notional_sol=0.0645,
+            proposed_tip_sol=0.00096,
+            user_wallet_pubkey=wallet_info["pubkey"],
+        )
+        signed_b = signer.sign_atomic_jito_bundle(test_bundle)
+        st.success(
+            f"✅ Ed25519 Cryptographic Signature Verified! "
+            f"Bundle ID: `{signed_b.bundle_id}` • Instructions Signed: {signed_b.total_instructions} • "
+            f"Signer: `{signed_b.signed_transactions[0].signer_pubkey}` • "
+            f"Signature Digest: `{signed_b.signed_transactions[0].signature_b58[:24]}...`"
+        )
 
     # 5. ATOMIC JITO BUNDLE INSPECTOR (GUARDRAIL 6)
     st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)

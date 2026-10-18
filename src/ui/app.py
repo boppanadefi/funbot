@@ -28,10 +28,19 @@ from src.ui.components.candidate_table import render_candidate_table
 from src.ui.components.cliff_charts import render_buyback_cliff_chart
 from src.ui.components.cluster_panel import render_cluster_panel
 from src.ui.components.cost_panel import render_cost_panel
+import importlib
+import src.ui.components.paper_panel
+import src.ui.components.live_panel
+try:
+    importlib.reload(src.ui.components.paper_panel)
+    importlib.reload(src.ui.components.live_panel)
+except Exception:
+    pass
 from src.ui.components.paper_panel import render_paper_panel
 from src.ui.components.live_panel import render_live_control_panel
 from src.ui.components.chat_panel import render_chat_panel
 from src.ui.chat_backend import TelemetryChatBackend
+from src.telemetry.rpc_client import SolanaConnectionMonitor
 
 # Manage Theme State
 if "theme" not in st.session_state:
@@ -96,18 +105,41 @@ if len(active_in_db) < 2:
     except Exception:
         pass
 
+# Solana Connection & RPC Diagnostics
+if "force_rpc_probe" not in st.session_state:
+    st.session_state.force_rpc_probe = False
+
+rpc_monitor = SolanaConnectionMonitor()
+rpc_diag = rpc_monitor.get_full_diagnostics(force_refresh=st.session_state.force_rpc_probe)
+st.session_state.force_rpc_probe = False
+
 # Header Bar
-head_col1, head_col2, head_col3 = st.columns([7, 2, 1])
+head_col1, head_col2, head_col3 = st.columns([6.2, 2.3, 1.5])
 with head_col1:
+    slot_str = f" • Slot #{rpc_diag['slot']:,}" if rpc_diag.get("slot") else ""
+    http_lat = f"{rpc_diag['http']['latency_ms']}ms" if rpc_diag['http']['ok'] else "ERR"
+    rpc_badge = (
+        f'<span class="badge badge-green">🟢 HELIUS RPC ({http_lat}{slot_str})</span>'
+        if rpc_diag["http"]["ok"]
+        else '<span class="badge badge-red">🔴 RPC OFFLINE</span>'
+    )
+    ws_lat = f"{rpc_diag['ws'].get('latency_ms', 0)}ms" if rpc_diag['ws']['ok'] else "STANDBY"
+    ws_badge = (
+        f'<span class="badge badge-blue">⚡ WSS CONNECTED ({ws_lat})</span>'
+        if rpc_diag["ws"]["ok"]
+        else '<span class="badge badge-amber">⚡ WSS STANDBY</span>'
+    )
+
     st.markdown(
-        """
-        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 0.5rem;">
+        f"""
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 0.4rem; flex-wrap: wrap;">
             <span style="font-size: 1.35rem; font-weight: 800; letter-spacing: -0.02em;">◆ FUNBOT TERMINAL</span>
-            <span class="badge badge-green">🔴 LIVE SOLANA ON-CHAIN FEED</span>
-            <span class="badge badge-blue">PUMPSWAP / RAYDIUM</span>
+            {rpc_badge}
+            {ws_badge}
+            <span class="badge badge-green">🔴 LIVE FEED</span>
         </div>
-        <div style="color: var(--text-muted); font-size: 0.8rem; margin-bottom: 1.2rem;">
-            Real-time post-graduation momentum • GeckoTerminal & DexScreener live ticks • Enforcing the 7 Invariants
+        <div style="color: var(--text-muted); font-size: 0.8rem; margin-bottom: 0.6rem;">
+            {rpc_diag['provider']} • PumpSwap (6EF8) Live Mirror • Real-time post-graduation momentum
         </div>
         """,
         unsafe_allow_html=True,
@@ -123,6 +155,63 @@ with head_col3:
     theme_btn_label = "☀️ Light" if is_dark else "🌙 Dark"
     if st.button(theme_btn_label, use_container_width=True, on_click=toggle_theme):
         pass
+
+# Collapsible / Interactive Network & RPC Diagnostics Expander
+with st.expander("⚡ Solana RPC & WebSocket Connection Status (Helius Dedicated)", expanded=False):
+    net_c1, net_c2, net_c3, net_c4 = st.columns(4)
+    with net_c1:
+        st.markdown(
+            f"""
+            <div class="metric-card">
+                <div class="metric-label">HTTP RPC Endpoint</div>
+                <div class="metric-value" style="font-size: 0.95rem; color: {'var(--green)' if rpc_diag['http']['ok'] else 'var(--red)'};">
+                    {'ONLINE' if rpc_diag['http']['ok'] else 'OFFLINE'} ({rpc_diag['http']['latency_ms']}ms)
+                </div>
+                <div class="metric-sub mono">{rpc_diag['http']['endpoint']}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with net_c2:
+        st.markdown(
+            f"""
+            <div class="metric-card">
+                <div class="metric-label">WebSocket Stream</div>
+                <div class="metric-value" style="font-size: 0.95rem; color: {'var(--blue)' if rpc_diag['ws']['ok'] else 'var(--amber)'};">
+                    {'CONNECTED' if rpc_diag['ws']['ok'] else 'DISCONNECTED'} ({rpc_diag['ws'].get('latency_ms', 0)}ms)
+                </div>
+                <div class="metric-sub mono">{rpc_diag['ws']['endpoint']}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with net_c3:
+        slot_val = f"#{rpc_diag['slot']:,}" if rpc_diag.get("slot") else "N/A"
+        st.markdown(
+            f"""
+            <div class="metric-card">
+                <div class="metric-label">Current Solana Slot</div>
+                <div class="metric-value mono" style="font-size: 1.15rem; color: var(--green);">{slot_val}</div>
+                <div class="metric-sub">Mainnet Block Progression</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with net_c4:
+        st.markdown(
+            f"""
+            <div class="metric-card">
+                <div class="metric-label">Staleness Circuit Breaker</div>
+                <div class="metric-value" style="font-size: 0.95rem; color: var(--green);">ENFORCED (&lt;1000ms)</div>
+                <div class="metric-sub">PumpSwap: 6EF8...F6P</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    if st.button("🔄 Test RPC & WebSocket Latency Now", use_container_width=False):
+        st.session_state.force_rpc_probe = True
+        st.rerun()
+
 
 # Compute Real-Time KPIs
 active_cands = [p for p in pools if p["state"] == "ACTIVE_WINDOW"]
