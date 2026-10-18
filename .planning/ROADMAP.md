@@ -75,7 +75,7 @@ graph TD
   - Configure production supervisor service (Windows Service / systemd script) for non-stop autonomous operation.
   - Implement periodic heartbeat ping and memory/resource watchdog.
   - Verify reboot recovery: automatically re-read SQLite WAL state and query wallet SPL balances.
-- **Status:** READY FOR PLANNING
+- **Status:** PLAN READY / READY FOR EXECUTION ([12-01-PLAN.md](file:///c:/Users/sivab/Documents/products/funbot/.planning/phases/12-production-supervisor-daemon/12-01-PLAN.md))
 
 ---
 

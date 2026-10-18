@@ -1,7 +1,7 @@
 # Project State — Funbot Post-Graduation Momentum System
 
 **Active Milestone:** Milestone 3 — Autonomous Mainnet Live Execution & Micro-Capital Trading (v4.0)  
-**Current Phase:** Phase 12 — Production Supervisor & Daemon Management (READY FOR PLANNING)  
+**Current Phase:** Phase 12 — Production Supervisor & Daemon Management (PLAN READY / READY FOR EXECUTION)  
 **Archived Milestones:**
 - Milestone 1: Observational Telemetry & Falsification Architecture ([ARCHIVED & AUDITED v1.0](file:///c:/Users/sivab/Documents/products/funbot/.planning/milestones/v1.0-ROADMAP.md))
 - Milestone 2: Live Execution Engine & Production Orchestration ([ARCHIVED & AUDITED v3.0](file:///c:/Users/sivab/Documents/products/funbot/.planning/milestones/v3.0-ROADMAP.md))  
@@ -16,7 +16,7 @@
 | :--- | :--- | :---: | :--- |
 | **Phase 10** | **Mainnet Micro-Capital Deployment & Dry-Run** | **COMPLETED & VERIFIED** (13/13 tests pass) | None |
 | **Phase 11** | **Real-Time Telemetry & Operator Webhooks** | **COMPLETED & VERIFIED** (14/14 tests pass) | None |
-| **Phase 12** | **Production Supervisor & Daemon Management** | **READY FOR PLANNING** | Phase 11 |
+| **Phase 12** | **Production Supervisor & Daemon Management** | **PLAN READY / READY FOR EXECUTION** | Phase 11 |
 | **Phase 13** | **Live Execution Walk-Forward & Performance Ledger** | PENDING | Phase 12 |
 
 ---
@@ -44,7 +44,7 @@
 ---
 
 ## Next Action in GSD Workflow
-Phase 11 is completed. Ready to plan Phase 12 (Production Supervisor & Daemon Management) via:
+Phase 12 plan is ready ([12-01-PLAN.md](file:///c:/Users/sivab/Documents/products/funbot/.planning/phases/12-production-supervisor-daemon/12-01-PLAN.md)). Ready to execute Phase 12 via:
 ```bash
-/gsd-plan-phase 12
+/gsd-execute-phase 12
 ```
