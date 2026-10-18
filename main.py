@@ -99,6 +99,51 @@ def cmd_terminal(args):
         print("\nStreamlit Terminal stopped cleanly.")
 
 
+def cmd_notify(args):
+    """Inspects or tests Discord and Telegram notification dispatchers."""
+    from src.orchestrator.alerting import AlertDispatcher, AlertEvent, AlertSeverity
+
+    discord_url = os.getenv("DISCORD_WEBHOOK_URL")
+    tg_token = os.getenv("TELEGRAM_BOT_TOKEN")
+    tg_chat_id = os.getenv("TELEGRAM_CHAT_ID")
+
+    print("\n" + "=" * 65)
+    print("        FUNBOT SYSTEMATIC ENGINE -- NOTIFICATION CHANNELS        ")
+    print("=" * 65)
+    print(f"  Discord Webhook:     {'CONFIGURED' if discord_url else 'UNSET / MOCK'}")
+    print(f"  Telegram Bot Token:  {'CONFIGURED' if tg_token else 'UNSET / MOCK'}")
+    print(f"  Telegram Chat ID:    {'CONFIGURED' if tg_chat_id else 'UNSET / MOCK'}")
+    print("-" * 65)
+
+    if args.test:
+        print("  Dispatching test notification embed...")
+        dispatcher = AlertDispatcher(
+            discord_webhook_url=discord_url,
+            telegram_bot_token=tg_token,
+            telegram_chat_id=tg_chat_id,
+            mock_mode=bool(not discord_url and not tg_token),
+        )
+        test_event = AlertEvent(
+            event_type="ENTRY_EXECUTED",
+            severity=AlertSeverity.INFO,
+            title="Funbot Test Notification",
+            message="Verification test notification from Phase 11 telemetry CLI.",
+            metadata={
+                "position_id": "test_pos_001",
+                "token_mint": "So11111111111111111111111111111111111111112",
+                "pool_address": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+                "entry_price_sol": 0.00045,
+                "dynamic_size_usd": 15.00,
+                "expected_friction_pct": 5.25,
+                "liquidity_sol": 62.4,
+                "checks_passed": 12,
+            },
+        )
+        asyncio.run(dispatcher.dispatch(test_event))
+        print("  [OK] Test alert dispatched successfully.")
+    print("=" * 65 + "\n")
+
+
 def cmd_daemon(args):
     """Runs the MasterTradingOrchestrator async production loop."""
     from src.orchestrator.main_loop import MasterTradingOrchestrator
@@ -134,6 +179,11 @@ def main():
     # dry-run
     p_dryrun = subparsers.add_parser("dry-run", help="Run zero-capital dry-run simulation pipeline")
     p_dryrun.set_defaults(func=cmd_dry_run)
+
+    # notify
+    p_notify = subparsers.add_parser("notify", help="Inspect or test notification webhooks")
+    p_notify.add_argument("--test", action="store_true", help="Send test notification embed")
+    p_notify.set_defaults(func=cmd_notify)
 
     # terminal
     p_terminal = subparsers.add_parser("terminal", help="Launch Streamlit operational terminal")

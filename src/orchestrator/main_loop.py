@@ -43,6 +43,7 @@ from src.live.kill_switch import EmergencyKillSwitch
 from src.orchestrator.scheduler import AsyncScheduler, TaskPriority
 from src.orchestrator.persistence import StatePersistenceManager
 from src.orchestrator.alerting import AlertDispatcher, AlertEvent, AlertSeverity
+from src.telemetry.telegram_operator_bot import TelegramOperatorBot
 
 logger = logging.getLogger("MasterTradingOrchestrator")
 
@@ -59,6 +60,7 @@ class MasterTradingOrchestrator:
         staleness_breaker: Optional[DataStalenessCircuitBreaker] = None,
         circuit_breaker: Optional[DailyCircuitBreaker] = None,
         kill_switch: Optional[EmergencyKillSwitch] = None,
+        telegram_bot: Optional[TelegramOperatorBot] = None,
         is_regime_test: bool = False,
         max_active_positions: Optional[int] = None,
         sol_price_usd: float = 155.0,
@@ -70,6 +72,7 @@ class MasterTradingOrchestrator:
         self.staleness_breaker = staleness_breaker or DataStalenessCircuitBreaker()
         self.circuit_breaker = circuit_breaker or DailyCircuitBreaker()
         self.kill_switch = kill_switch or EmergencyKillSwitch()
+        self.telegram_bot = telegram_bot
 
         self.is_regime_test = is_regime_test
         # Concurrency override: 3 positions in regime test, strict 1 in production
@@ -132,6 +135,10 @@ class MasterTradingOrchestrator:
             # Windows ProactorEventLoop does not support add_signal_handler
             pass
 
+        # Start Telegram Operator Bot polling if configured
+        if self.telegram_bot:
+            asyncio.create_task(self.telegram_bot.start_polling())
+
         await self.alerts.dispatch(
             AlertEvent(
                 event_type="ORCHESTRATOR_START",
@@ -157,6 +164,10 @@ class MasterTradingOrchestrator:
 
         logger.warning("Initiating graceful shutdown of MasterTradingOrchestrator...")
         self._is_running = False
+
+        # Stop Telegram bot polling
+        if self.telegram_bot:
+            self.telegram_bot.stop_polling()
 
         # Cancel all exit timers for active positions
         for pool_id, (fsm, timer_mgr) in list(self.active_positions.items()):

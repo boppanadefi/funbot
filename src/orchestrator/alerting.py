@@ -32,6 +32,9 @@ class AlertEvent:
     timestamp: float = field(default_factory=time.time)
 
 
+from src.telemetry.discord_webhook_dispatcher import DiscordWebhookDispatcher, DiscordZincTheme
+
+
 class AlertDispatcher:
     """Dispatches asynchronous alerts across Discord, Telegram, and event log."""
 
@@ -48,12 +51,18 @@ class AlertDispatcher:
         telegram_bot_token: Optional[str] = None,
         telegram_chat_id: Optional[str] = None,
         max_rate_per_min: int = 30,
+        mock_mode: bool = False,
     ):
         self.discord_url = discord_webhook_url
         self.tg_token = telegram_bot_token
         self.tg_chat_id = telegram_chat_id
         self.max_rate_per_min = max_rate_per_min
+        self.mock_mode = mock_mode
 
+        self.discord_dispatcher = DiscordWebhookDispatcher(
+            webhook_url=discord_webhook_url,
+            mock_mode=mock_mode,
+        )
         self._history: List[AlertEvent] = []
         self._sent_timestamps: List[float] = []
 
@@ -68,6 +77,59 @@ class AlertDispatcher:
 
     def format_discord_embed(self, event: AlertEvent) -> Dict[str, Any]:
         """Formats alert into a Discord webhook payload with Zinc aesthetic."""
+        meta = event.metadata
+        ev_type = event.event_type.upper()
+
+        if ev_type in ("ENTRY_SIGNAL", "ENTRY_EXECUTED", "POSITION_OPENED") and "token_mint" in meta:
+            return self.discord_dispatcher.build_entry_embed(
+                position_id=meta.get("position_id", "N/A"),
+                token_mint=meta.get("token_mint", "Unknown"),
+                pool_address=meta.get("pool_address", "Unknown"),
+                entry_price_sol=float(meta.get("entry_price_sol", 0.0)),
+                dynamic_size_usd=float(meta.get("dynamic_size_usd", 15.0)),
+                expected_friction_pct=float(meta.get("expected_friction_pct", 5.0)),
+                liquidity_sol=float(meta.get("liquidity_sol", 50.0)),
+                regime=meta.get("regime", "REGIME_POST_GRAD"),
+                checks_passed=int(meta.get("checks_passed", 12)),
+                timestamp=event.timestamp,
+            )
+        elif ev_type in ("RATCHET_UPDATE", "RATCHET_ADJUSTED") and "token_mint" in meta:
+            return self.discord_dispatcher.build_ratchet_embed(
+                position_id=meta.get("position_id", "N/A"),
+                token_mint=meta.get("token_mint", "Unknown"),
+                peak_price_sol=float(meta.get("peak_price_sol", 0.0)),
+                new_stop_price_sol=float(meta.get("new_stop_price_sol", 0.0)),
+                locked_gain_pct=float(meta.get("locked_gain_pct", 0.0)),
+                timestamp=event.timestamp,
+            )
+        elif ev_type in ("TP1_SCALE_OUT", "TP1_HIT") and "token_mint" in meta:
+            return self.discord_dispatcher.build_tp1_embed(
+                position_id=meta.get("position_id", "N/A"),
+                token_mint=meta.get("token_mint", "Unknown"),
+                net_sol_received=float(meta.get("net_sol_received", 0.0)),
+                gross_return_pct=float(meta.get("gross_return_pct", 9.0)),
+                runner_tokens_remaining=float(meta.get("runner_tokens_remaining", 0.0)),
+                timestamp=event.timestamp,
+            )
+        elif ev_type in ("EXIT_CLOSED", "POSITION_CLOSED") and "token_mint" in meta:
+            return self.discord_dispatcher.build_exit_embed(
+                position_id=meta.get("position_id", "N/A"),
+                token_mint=meta.get("token_mint", "Unknown"),
+                exit_reason=meta.get("exit_reason", "STOP_LOSS"),
+                net_return_pct=float(meta.get("net_return_pct", 0.0)),
+                net_pnl_usd=float(meta.get("net_pnl_usd", 0.0)),
+                hold_duration_seconds=float(meta.get("hold_duration_seconds", 0.0)),
+                timestamp=event.timestamp,
+            )
+        elif ev_type in ("RISK_HALT", "CIRCUIT_BREAKER_TRIPPED", "KILL_SWITCH_TRIPPED"):
+            return self.discord_dispatcher.build_risk_halt_embed(
+                halt_type=meta.get("halt_type", event.title),
+                reason=meta.get("reason", event.message),
+                tripped_at=meta.get("tripped_at"),
+                operator_action_required=meta.get("operator_action_required", True),
+                timestamp=event.timestamp,
+            )
+
         fields = [
             {"name": k, "value": str(v), "inline": True}
             for k, v in list(event.metadata.items())[:8]
@@ -77,7 +139,7 @@ class AlertDispatcher:
                 {
                     "title": f"[{event.severity.value}] {event.title}",
                     "description": event.message,
-                    "color": self.SEVERITY_COLORS.get(event.severity, 0x95A5A6),
+                    "color": self.SEVERITY_COLORS.get(event.severity, DiscordZincTheme.CARD),
                     "fields": fields,
                     "footer": {"text": "Funbot Momentum Engine • Solana Mainnet"},
                     "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(event.timestamp)),
@@ -109,16 +171,19 @@ class AlertDispatcher:
         self._sent_timestamps.append(time.time())
 
         # Run non-blocking HTTP dispatches
+        should_send_discord = bool(self.discord_url or self.mock_mode or self.discord_dispatcher.mock_mode)
+        should_send_telegram = bool(self.tg_token and self.tg_chat_id)
+
         loop = asyncio.get_running_loop() if asyncio.get_event_loop().is_running() else None
         if loop:
-            if self.discord_url:
+            if should_send_discord:
                 loop.run_in_executor(None, self._send_discord_sync, event)
-            if self.tg_token and self.tg_chat_id:
+            if should_send_telegram:
                 loop.run_in_executor(None, self._send_telegram_sync, event)
         else:
-            if self.discord_url:
+            if should_send_discord:
                 self._send_discord_sync(event)
-            if self.tg_token and self.tg_chat_id:
+            if should_send_telegram:
                 self._send_telegram_sync(event)
 
         return True
@@ -126,7 +191,7 @@ class AlertDispatcher:
     def _send_discord_sync(self, event: AlertEvent):
         try:
             payload = self.format_discord_embed(event)
-            requests.post(self.discord_url, json=payload, timeout=3.0)
+            self.discord_dispatcher.send_payload(payload)
         except Exception as e:
             logger.warning(f"Failed to deliver Discord alert: {e}")
 

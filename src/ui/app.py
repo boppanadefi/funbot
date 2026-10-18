@@ -38,6 +38,7 @@ except Exception:
     pass
 from src.ui.components.paper_panel import render_paper_panel
 from src.ui.components.live_panel import render_live_control_panel
+from src.ui.components.live_terminal_tab import render_live_operator_terminal_tab
 from src.ui.components.chat_panel import render_chat_panel
 from src.ui.chat_backend import TelemetryChatBackend
 from src.telemetry.rpc_client import SolanaConnectionMonitor
@@ -229,7 +230,7 @@ render_falsification_kpis(
 )
 
 # Terminal Navigation Tabs
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs(
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs(
     [
         "1. Active Watchlist (8–25m)",
         "2. BOOST Cliff Decay",
@@ -240,6 +241,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs(
         "7. Live Control (Phase 5)",
         "8. ✦ Gemini AI Assistant",
         "9. The 7 Invariants",
+        "10. ⚡ Live Operator Terminal (Phase 11)",
     ]
 )
 
@@ -342,3 +344,6 @@ with tab9:
         """,
         unsafe_allow_html=True,
     )
+
+with tab10:
+    render_live_operator_terminal_tab(is_dark=is_dark)
