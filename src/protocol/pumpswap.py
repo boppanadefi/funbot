@@ -256,3 +256,39 @@ class PumpSwapProgram:
 
         data = SELL_DISCRIMINATOR + struct.pack("<QQ", amount_tokens, min_sol_output_lamports)
         return CompiledInstruction(program_id=self.program_id, accounts=accounts, data=data)
+
+
+# Module-level convenience wrappers
+_default_pumpswap = PumpSwapProgram()
+
+
+def build_buy_instruction(
+    pool_id: str,
+    mint: str,
+    user_pubkey: str,
+    sol_amount_lamports: int,
+    min_token_output: int = 1,
+) -> CompiledInstruction:
+    """Builds canonical PumpSwap buy instruction using the default program instance."""
+    return _default_pumpswap.build_buy_instruction(
+        user_address=user_pubkey,
+        mint_address=mint,
+        amount_tokens=min_token_output,
+        max_sol_cost_lamports=sol_amount_lamports,
+    )
+
+
+def build_sell_instruction(
+    pool_id: str,
+    mint: str,
+    user_pubkey: str,
+    token_amount: int,
+    min_sol_output_lamports: int = 0,
+) -> CompiledInstruction:
+    """Builds canonical PumpSwap sell instruction using the default program instance."""
+    return _default_pumpswap.build_sell_instruction(
+        user_address=user_pubkey,
+        mint_address=mint,
+        amount_tokens=token_amount,
+        min_sol_output_lamports=min_sol_output_lamports,
+    )
