@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from src.live.circuit_breaker import DailyCircuitBreaker
 from src.live.kill_switch import EmergencyKillSwitch
+from src.orchestrator.heartbeat import HeartbeatWatchdog, is_process_running
 from src.telemetry.wal_streamer import SqliteWalStreamer
 
 
@@ -78,7 +79,7 @@ def render_live_operator_terminal_tab(is_dark: bool = True) -> None:
     st.markdown("---")
 
     # 2. Key System Health & Risk Metric Cards
-    m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+    m_col1, m_col2, m_col3, m_col4, m_col5 = st.columns(5)
 
     status_badge = "🚨 HALTED" if ks_tripped else ("🛑 CB HALT" if cb_halted else "🟢 ACTIVE")
     status_color = "var(--red)" if (ks_tripped or cb_halted) else "var(--green)"
@@ -87,6 +88,30 @@ def render_live_operator_terminal_tab(is_dark: bool = True) -> None:
     rem_budget = cb_status.get("remaining_budget_usd", 10.00)
     net_pnl = cb_status.get("net_daily_pnl_usd", 0.00)
     db_metrics = streamer.get_database_metrics()
+
+    # Watchdog diagnostics
+    watchdog = HeartbeatWatchdog()
+    pulse = watchdog.read_latest_pulse()
+    wd_status = watchdog.check_health()
+    child_pid = pulse.get("pid") if pulse else None
+    is_alive = is_process_running(child_pid) if child_pid else False
+
+    if not pulse or not is_alive:
+        daemon_badge = "🔴 OFFLINE"
+        daemon_color = "var(--red)"
+        daemon_sub = "Daemon inactive"
+    elif wd_status.is_stale:
+        daemon_badge = "🟡 STALE"
+        daemon_color = "var(--gold)"
+        daemon_sub = f"{wd_status.age_seconds:.0f}s since pulse"
+    elif wd_status.memory_breached:
+        daemon_badge = "⚠️ MEM OVER"
+        daemon_color = "var(--red)"
+        daemon_sub = f"{wd_status.memory_rss_mb:.1f}MB > 512MB"
+    else:
+        daemon_badge = "🟢 ONLINE"
+        daemon_color = "var(--green)"
+        daemon_sub = f"PID {child_pid} | {wd_status.memory_rss_mb:.1f}MB | {wd_status.age_seconds:.0f}s"
 
     with m_col1:
         st.markdown(
@@ -130,7 +155,19 @@ def render_live_operator_terminal_tab(is_dark: bool = True) -> None:
             <div class="metric-card">
                 <div class="metric-label">SQLite WAL Journal</div>
                 <div class="metric-value" style="color: var(--text); font-size: 0.95rem;">{db_metrics['telemetry_db_size']}</div>
-                <div class="metric-sub">WAL Mode: {'ACTIVE' if db_metrics['telemetry_wal_active'] else 'STANDBY'} ({db_metrics['last_synced_utc']})</div>
+                <div class="metric-sub">WAL: {'ACTIVE' if db_metrics['telemetry_wal_active'] else 'STANDBY'} ({db_metrics['last_synced_utc']})</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with m_col5:
+        st.markdown(
+            f"""
+            <div class="metric-card">
+                <div class="metric-label">Daemon Watchdog</div>
+                <div class="metric-value" style="color: {daemon_color};">{daemon_badge}</div>
+                <div class="metric-sub">{daemon_sub}</div>
             </div>
             """,
             unsafe_allow_html=True,

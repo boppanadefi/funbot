@@ -1,0 +1,35 @@
+[Unit]
+Description=Funbot Solana Systematic Trading Production Supervisor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=funbot
+Group=funbot
+WorkingDirectory=/opt/funbot
+Environment="PYTHONUNBUFFERED=1"
+Environment="PYTHONPATH=/opt/funbot"
+ExecStart=/opt/funbot/.venv/bin/python main.py supervisor --run
+Restart=always
+RestartSec=5s
+
+# Process and resource limits
+LimitNOFILE=65535
+MemoryMax=1G
+TasksMax=512
+
+# Standard output and error logging to systemd journal
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=funbot-supervisor
+
+# Sandboxing and security hardening
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/funbot/data /opt/funbot/logs
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

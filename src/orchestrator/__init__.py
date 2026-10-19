@@ -19,6 +19,22 @@ from src.orchestrator.alerting import (
 from src.orchestrator.main_loop import (
     MasterTradingOrchestrator,
 )
+from src.orchestrator.heartbeat import (
+    HeartbeatPublisher,
+    HeartbeatWatchdog,
+    HeartbeatPulse,
+    WatchdogStatus,
+    get_process_rss_mb,
+)
+from src.orchestrator.supervisor import (
+    ProductionSupervisor,
+    SupervisorConfig,
+)
+from src.orchestrator.reconciliation import (
+    StartupReconciler,
+    ReconciliationReport,
+    fetch_wallet_spl_balances,
+)
 
 __all__ = [
     "TaskPriority",
@@ -29,4 +45,14 @@ __all__ = [
     "AlertEvent",
     "AlertDispatcher",
     "MasterTradingOrchestrator",
+    "HeartbeatPublisher",
+    "HeartbeatWatchdog",
+    "HeartbeatPulse",
+    "WatchdogStatus",
+    "get_process_rss_mb",
+    "ProductionSupervisor",
+    "SupervisorConfig",
+    "StartupReconciler",
+    "ReconciliationReport",
+    "fetch_wallet_spl_balances",
 ]

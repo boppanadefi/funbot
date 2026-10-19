@@ -78,6 +78,20 @@ class StatePersistenceManager:
                     halt_reason TEXT,
                     last_reset_timestamp REAL NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS heartbeat_journal (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    timestamp REAL NOT NULL,
+                    pid INTEGER NOT NULL,
+                    uptime_seconds REAL NOT NULL,
+                    memory_rss_mb REAL NOT NULL,
+                    cpu_percent REAL NOT NULL,
+                    active_positions INTEGER NOT NULL,
+                    is_kill_switch_tripped INTEGER NOT NULL,
+                    is_circuit_breaker_halted INTEGER NOT NULL,
+                    last_slot INTEGER NOT NULL,
+                    last_pulse_timestamp REAL NOT NULL
+                );
             """)
 
     def save_position_state(self, ctx: PositionContext, state: PositionState):
@@ -171,6 +185,51 @@ class StatePersistenceManager:
         """Loads circuit breaker state from journal."""
         with self._get_connection() as conn:
             row = conn.execute("SELECT * FROM circuit_breaker_journal WHERE id = 1").fetchone()
+            if row:
+                return dict(row)
+        return None
+
+    def save_heartbeat(self, pulse_data: Dict[str, Any]):
+        """Persists latest heartbeat pulse to WAL database."""
+        now = time.time()
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO heartbeat_journal (
+                    id, timestamp, pid, uptime_seconds, memory_rss_mb, cpu_percent,
+                    active_positions, is_kill_switch_tripped, is_circuit_breaker_halted,
+                    last_slot, last_pulse_timestamp
+                ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    timestamp=excluded.timestamp,
+                    pid=excluded.pid,
+                    uptime_seconds=excluded.uptime_seconds,
+                    memory_rss_mb=excluded.memory_rss_mb,
+                    cpu_percent=excluded.cpu_percent,
+                    active_positions=excluded.active_positions,
+                    is_kill_switch_tripped=excluded.is_kill_switch_tripped,
+                    is_circuit_breaker_halted=excluded.is_circuit_breaker_halted,
+                    last_slot=excluded.last_slot,
+                    last_pulse_timestamp=excluded.last_pulse_timestamp;
+                """,
+                (
+                    pulse_data.get("timestamp", now),
+                    pulse_data.get("pid", 0),
+                    pulse_data.get("uptime_seconds", 0.0),
+                    pulse_data.get("memory_rss_mb", 0.0),
+                    pulse_data.get("cpu_percent", 0.0),
+                    pulse_data.get("active_positions", 0),
+                    1 if pulse_data.get("is_kill_switch_tripped", False) else 0,
+                    1 if pulse_data.get("is_circuit_breaker_halted", False) else 0,
+                    pulse_data.get("last_slot", 0),
+                    now,
+                ),
+            )
+
+    def load_latest_heartbeat(self) -> Optional[Dict[str, Any]]:
+        """Loads latest heartbeat pulse from journal."""
+        with self._get_connection() as conn:
+            row = conn.execute("SELECT * FROM heartbeat_journal WHERE id = 1").fetchone()
             if row:
                 return dict(row)
         return None

@@ -43,6 +43,8 @@ from src.live.kill_switch import EmergencyKillSwitch
 from src.orchestrator.scheduler import AsyncScheduler, TaskPriority
 from src.orchestrator.persistence import StatePersistenceManager
 from src.orchestrator.alerting import AlertDispatcher, AlertEvent, AlertSeverity
+from src.orchestrator.heartbeat import HeartbeatPublisher
+from src.orchestrator.reconciliation import StartupReconciler
 from src.telemetry.telegram_operator_bot import TelegramOperatorBot
 
 logger = logging.getLogger("MasterTradingOrchestrator")
@@ -86,9 +88,20 @@ class MasterTradingOrchestrator:
         # State tracking: pool_id -> (fsm, timer_manager)
         self.active_positions: Dict[str, Tuple[PositionStateMachine, ExitTimerManager]] = {}
         self.candidate_cache: Dict[str, CandidateContext] = {}
-
         self._is_running = False
         self._shutdown_event = asyncio.Event()
+
+        # Heartbeat liveliness publisher
+        self.heartbeat_publisher = HeartbeatPublisher(
+            persistence_manager=self.persistence,
+            active_positions_provider=lambda: self.active_position_count,
+            kill_switch_provider=lambda: self.is_kill_switch_active,
+            circuit_breaker_provider=lambda: self.is_circuit_breaker_active,
+            slot_provider=lambda: getattr(self.staleness_breaker, "last_observed_slot", 0),
+        )
+        # State reconciler
+        self.reconciler = StartupReconciler(persistence=self.persistence, alerts=self.alerts)
+        self._heartbeat_task: Optional[asyncio.Task] = None
 
     @property
     def is_running(self) -> bool:
@@ -139,6 +152,10 @@ class MasterTradingOrchestrator:
         if self.telegram_bot:
             asyncio.create_task(self.telegram_bot.start_polling())
 
+        # Start Heartbeat liveliness publisher
+        self.heartbeat_publisher.publish_pulse()
+        self._heartbeat_task = asyncio.create_task(self.heartbeat_publisher.run_loop())
+
         await self.alerts.dispatch(
             AlertEvent(
                 event_type="ORCHESTRATOR_START",
@@ -169,6 +186,11 @@ class MasterTradingOrchestrator:
         if self.telegram_bot:
             self.telegram_bot.stop_polling()
 
+        # Stop Heartbeat liveliness publisher
+        self.heartbeat_publisher.stop()
+        if self._heartbeat_task and not self._heartbeat_task.done():
+            self._heartbeat_task.cancel()
+
         # Cancel all exit timers for active positions
         for pool_id, (fsm, timer_mgr) in list(self.active_positions.items()):
             timer_mgr.cancel_all()
@@ -197,7 +219,8 @@ class MasterTradingOrchestrator:
 
     async def reconcile_startup(self, on_chain_balances: Dict[str, int]) -> List[str]:
         """Reconciles persisted database positions against wallet balances on startup."""
-        messages = self.persistence.reconcile_startup(on_chain_balances)
+        report = await self.reconciler.reconcile(on_chain_balances=on_chain_balances)
+        messages = report.messages
 
         # Hydrate non-terminal records into active state machine instances
         active_records = self.persistence.load_active_positions()

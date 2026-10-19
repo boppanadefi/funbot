@@ -161,6 +161,59 @@ def cmd_daemon(args):
         print("\nOrchestrator daemon shut down cleanly.")
 
 
+def cmd_supervisor(args):
+    """Manages the ProductionSupervisor lifecycle or inspects watchdog status."""
+    from src.orchestrator.supervisor import ProductionSupervisor, SupervisorConfig
+    from src.orchestrator.heartbeat import HeartbeatWatchdog, is_process_running
+
+    if getattr(args, "run", False):
+        child_args = ["daemon"]
+        if getattr(args, "regime_test", False):
+            child_args.append("--regime-test")
+        config = SupervisorConfig(child_args=child_args)
+        supervisor = ProductionSupervisor(config=config)
+        print("\n" + "=" * 65)
+        print("        FUNBOT SYSTEMATIC ENGINE — PRODUCTION SUPERVISOR       ")
+        print(f"  Target Command:      python main.py {' '.join(child_args)}")
+        print(f"  Memory Ceiling:      {config.memory_ceiling_mb:.1f} MB")
+        print(f"  Heartbeat Stale:     >{config.stale_threshold_seconds:.1f}s")
+        print(f"  Crash Loop Window:   5 crashes / {config.window_seconds / 60.0:.0f}m")
+        print("=" * 65 + "\n")
+        try:
+            asyncio.run(supervisor.run())
+        except KeyboardInterrupt:
+            print("\nSupervisor stopped by operator.")
+    else:
+        # Default or --status: inspect current status
+        watchdog = HeartbeatWatchdog()
+        pulse = watchdog.read_latest_pulse()
+        status = watchdog.check_health()
+
+        print("\n" + "=" * 65)
+        print("     FUNBOT SYSTEMATIC ENGINE — SUPERVISOR & DAEMON STATUS     ")
+        print("=" * 65)
+        if not pulse:
+            print("  Daemon Status:       OFFLINE (No heartbeat.json found)")
+            print("  Action:              Run 'python main.py supervisor --run' to start.")
+        else:
+            pid = pulse.get("pid", 0)
+            alive = is_process_running(pid) if pid else False
+            status_tag = "ONLINE (HEALTHY)" if status.is_healthy else f"DEGRADED / {status.reason}"
+            if not alive:
+                status_tag = "OFFLINE (PROCESS DEAD)"
+
+            print(f"  Daemon Status:       {status_tag}")
+            print(f"  Child Process PID:   {pid} ({'ACTIVE' if alive else 'TERMINATED'})")
+            print(f"  Heartbeat Age:       {status.age_seconds:.1f}s (Threshold: <=60.0s)")
+            print(f"  Memory RSS:          {status.memory_rss_mb:.2f} MB (Ceiling: 512.0 MB)")
+            print(f"  Uptime:              {pulse.get('uptime_seconds', 0.0):.1f}s")
+            print(f"  Active Positions:    {pulse.get('active_positions', 0)}")
+            print(f"  Kill Switch:         {'TRIPPED' if pulse.get('is_kill_switch_tripped') else 'CLEAR'}")
+            print(f"  Circuit Breaker:     {'HALTED' if pulse.get('is_circuit_breaker_halted') else 'ACTIVE'}")
+            print(f"  Last Observed Slot:  {pulse.get('last_slot', 0)}")
+        print("=" * 65 + "\n")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Funbot Systematic Solana Momentum Trading Engine",
@@ -194,6 +247,13 @@ def main():
     p_daemon = subparsers.add_parser("daemon", help="Run MasterTradingOrchestrator async daemon")
     p_daemon.add_argument("--regime-test", action="store_true", help="Enable regime test mode (up to 3 concurrent active positions)")
     p_daemon.set_defaults(func=cmd_daemon)
+
+    # supervisor
+    p_sup = subparsers.add_parser("supervisor", help="Run ProductionSupervisor parent watcher or inspect status")
+    p_sup.add_argument("--run", action="store_true", help="Start the ProductionSupervisor in the foreground")
+    p_sup.add_argument("--status", action="store_true", help="Display real-time heartbeat and watchdog status")
+    p_sup.add_argument("--regime-test", action="store_true", help="Enable regime test mode for child daemon")
+    p_sup.set_defaults(func=cmd_supervisor)
 
     args = parser.parse_args()
 

@@ -41,6 +41,7 @@ include = ["src*"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 asyncio_mode = "strict"
+pythonpath = ["."]
 
 [tool.ruff]
 line-length = 120
