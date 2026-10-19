@@ -1,7 +1,7 @@
 # Project State — Funbot Post-Graduation Momentum System
 
 **Active Milestone:** Milestone 3 — Autonomous Mainnet Live Execution & Micro-Capital Trading (v4.0)  
-**Current Phase:** Phase 13 — Live Execution Walk-Forward & Performance Ledger (READY FOR PLANNING)  
+**Current Phase:** Phase 13 — Live Execution Walk-Forward & Performance Ledger (PLAN READY / READY FOR EXECUTION)  
 **Archived Milestones:**
 - Milestone 1: Observational Telemetry & Falsification Architecture ([ARCHIVED & AUDITED v1.0](file:///c:/Users/sivab/Documents/products/funbot/.planning/milestones/v1.0-ROADMAP.md))
 - Milestone 2: Live Execution Engine & Production Orchestration ([ARCHIVED & AUDITED v3.0](file:///c:/Users/sivab/Documents/products/funbot/.planning/milestones/v3.0-ROADMAP.md))  
@@ -17,7 +17,7 @@
 | **Phase 10** | **Mainnet Micro-Capital Deployment & Dry-Run** | **COMPLETED & VERIFIED** (13/13 tests pass) | None |
 | **Phase 11** | **Real-Time Telemetry & Operator Webhooks** | **COMPLETED & VERIFIED** (14/14 tests pass) | None |
 | **Phase 12** | **Production Supervisor & Daemon Management** | **COMPLETED & VERIFIED** (15/15 tests pass) | None |
-| **Phase 13** | **Live Execution Walk-Forward & Performance Ledger** | **READY FOR PLANNING** | Phase 12 |
+| **Phase 13** | **Live Execution Walk-Forward & Performance Ledger** | **PLAN READY / READY FOR EXECUTION** | Phase 12 |
 
 ---
 
@@ -49,7 +49,7 @@
 ---
 
 ## Next Action in GSD Workflow
-Phase 12 execution is complete and verified. The next action in the GSD workflow is to plan Phase 13:
+Phase 13 plan is ready ([13-01-PLAN.md](file:///c:/Users/sivab/Documents/products/funbot/.planning/phases/13-live-execution-walk-forward/13-01-PLAN.md)). Ready to execute Phase 13 via:
 ```bash
-/gsd-plan-phase 13
+/gsd-execute-phase 13
 ```

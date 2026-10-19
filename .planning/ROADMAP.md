@@ -85,4 +85,4 @@ graph TD
   - Execute live test trade ($3.00 notional) adhering to the 12-Check Gate and Path A+ dynamic trailing stop.
   - Compare live fill prices against AMM quote calculator to record real-world slippage and MEV sandwich resistance.
   - Track 28-day autonomous PnL scorecard with cumulative return, drawdown, and win rate.
-- **Status:** **READY FOR PLANNING** (Next in GSD workflow)
+- **Status:** **PLAN READY / READY FOR EXECUTION** ([13-01-PLAN.md](file:///c:/Users/sivab/Documents/products/funbot/.planning/phases/13-live-execution-walk-forward/13-01-PLAN.md))
