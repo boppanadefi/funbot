@@ -12,6 +12,8 @@ from typing import Any, Dict, List, Optional
 
 from src.live.circuit_breaker import DailyCircuitBreaker
 from src.live.kill_switch import EmergencyKillSwitch
+from src.live.live_ledger import LiveLedgerManager
+from src.live.live_scorecard import LiveScorecard
 from src.orchestrator.heartbeat import HeartbeatWatchdog, is_process_running
 from src.telemetry.wal_streamer import SqliteWalStreamer
 
@@ -21,6 +23,8 @@ def render_live_operator_terminal_tab(is_dark: bool = True) -> None:
     streamer = SqliteWalStreamer()
     cb = DailyCircuitBreaker()
     ks = EmergencyKillSwitch()
+    live_ledger = LiveLedgerManager()
+    scorecard = LiveScorecard(live_ledger=live_ledger)
 
     st.markdown(
         """
@@ -263,7 +267,72 @@ def render_live_operator_terminal_tab(is_dark: bool = True) -> None:
         table_html += "</tbody></table>"
         st.markdown(table_html, unsafe_allow_html=True)
 
-    # 5. Handle Auto-Refresh Loop
+    # 5. Live Execution Ledger & Walk-Forward Attribution (Phase 13)
+    st.markdown("---")
+    st.markdown("### ⚡ Live On-Chain Execution Ledger & Walk-Forward Performance (Phase 13)")
+    sc_report = scorecard.generate_report()
+    divergence = scorecard.validator.compute_divergence()
+
+    lw_col1, lw_col2, lw_col3, lw_col4 = st.columns(4)
+    with lw_col1:
+        st.metric("Live Trades (28D)", f"{sc_report.total_trades}", f"{sc_report.winning_trades}W / {sc_report.losing_trades}L")
+    with lw_col2:
+        st.metric("Live Win Rate", f"{sc_report.win_rate_pct:.1f}%", "Target: >=60%")
+    with lw_col3:
+        st.metric("Net Realized PnL", f"${sc_report.net_pnl_usd:.2f}", f"{sc_report.net_pnl_sol:+.5f} SOL")
+    with lw_col4:
+        div_tag = "🟢 PASS (<2%)" if divergence.is_acceptable else "⚠️ ELEVATED"
+        st.metric("Walk-Forward Slippage", f"{divergence.live_avg_slippage_pct:.2f}%", div_tag)
+
+    live_trades = live_ledger.get_recent_live_trades(limit=6)
+    if not live_trades:
+        st.markdown(
+            """
+            <div style="font-size: 0.85rem; color: var(--text-muted); font-style: italic; margin-top: 0.5rem;">
+                No confirmed live on-chain micro-trades recorded yet. Run <code>python main.py trade --micro</code> to execute a test micro-trade.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        live_table_html = """
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Timestamp</th>
+                    <th>Position ID</th>
+                    <th>Token Mint</th>
+                    <th>Spent (SOL)</th>
+                    <th>Slippage</th>
+                    <th>Net PnL (USD)</th>
+                    <th>Status / Exit</th>
+                </tr>
+            </thead>
+            <tbody>
+        """
+        for lt in live_trades:
+            ts_str = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(lt.entry_timestamp))
+            pnl_color = "var(--green)" if lt.net_pnl_usd >= 0 else "var(--red)"
+            pnl_text = f"+${lt.net_pnl_usd:.2f}" if lt.net_pnl_usd >= 0 else f"-${abs(lt.net_pnl_usd):.2f}"
+            slip_text = f"{lt.total_slippage_pct:.2f}%"
+            mint_short = f"{lt.token_mint[:4]}...{lt.token_mint[-4:]}"
+            pos_short = lt.position_id[:16]
+
+            live_table_html += f"""
+            <tr>
+                <td class="mono">{ts_str}</td>
+                <td class="mono">{pos_short}</td>
+                <td class="mono">{mint_short}</td>
+                <td class="mono">{lt.sol_spent:.5f}</td>
+                <td class="mono">{slip_text}</td>
+                <td class="mono" style="color: {pnl_color}; font-weight: 600;">{pnl_text}</td>
+                <td><span class="badge badge-green">{lt.exit_reason}</span></td>
+            </tr>
+            """
+        live_table_html += "</tbody></table>"
+        st.markdown(live_table_html, unsafe_allow_html=True)
+
+    # 6. Handle Auto-Refresh Loop
     if refresh_rate != "Off":
         secs = int(refresh_rate.replace("s", ""))
         time.sleep(secs)

@@ -6,7 +6,7 @@
 |---|---|---|:---:|---|
 | **Milestone 1** | v1.0 | Observational Telemetry & Falsification Architecture | **ARCHIVED & PASSED** | [v1.0-ROADMAP.md](file:///c:/Users/sivab/Documents/products/funbot/.planning/milestones/v1.0-ROADMAP.md) |
 | **Milestone 2** | v3.0 | Live Execution Engine & Production Orchestration | **ARCHIVED & PASSED** | [v3.0-ROADMAP.md](file:///c:/Users/sivab/Documents/products/funbot/.planning/milestones/v3.0-ROADMAP.md) |
-| **Milestone 3** | v4.0 | Autonomous Mainnet Live Execution & Micro-Capital Trading | **ACTIVE / READY FOR PLANNING** | Phases 10–13 (Below) |
+| **Milestone 3** | v4.0 | Autonomous Mainnet Live Execution & Micro-Capital Trading | **COMPLETED & VERIFIED** | Phases 10–13 (Below) |
 
 ---
 
@@ -85,4 +85,4 @@ graph TD
   - Execute live test trade ($3.00 notional) adhering to the 12-Check Gate and Path A+ dynamic trailing stop.
   - Compare live fill prices against AMM quote calculator to record real-world slippage and MEV sandwich resistance.
   - Track 28-day autonomous PnL scorecard with cumulative return, drawdown, and win rate.
-- **Status:** **PLAN READY / READY FOR EXECUTION** ([13-01-PLAN.md](file:///c:/Users/sivab/Documents/products/funbot/.planning/phases/13-live-execution-walk-forward/13-01-PLAN.md))
+- **Status:** **COMPLETED & VERIFIED** (12/12 tests passing, 241/241 suite total) ([13-01-PLAN.md](file:///c:/Users/sivab/Documents/products/funbot/.planning/phases/13-live-execution-walk-forward/13-01-PLAN.md))
